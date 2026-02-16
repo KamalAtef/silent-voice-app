@@ -34,23 +34,43 @@ dependencies:
   flutter_localizations:
     sdk: flutter
 
-
   http: ^1.2.2
-
-  # Secure Storage
   flutter_secure_storage: ^9.0.0
-
   shared_preferences: ^2.2.3
   share_plus: ^10.0.2
-
   url_launcher: ^6.2.6
   flutter_svg: ^2.0.9
   cupertino_icons: ^1.0.8
+
+  # ✅ NEW: Voice Recording & API Integration
+  dio: ^5.4.0  # Better for multipart file uploads
+  record: ^6.1.2  # Audio recording with .wav support
+  path_provider: ^2.1.2  # For temp file paths
+  permission_handler: ^11.3.0  # Microphone permissions
+  flutter_tts: ^4.0.2  # Text-to-Speech
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
+
+  # ✅ App Icon
+  flutter_launcher_icons: ^0.14.1
+
+# ✅ Dependency Overrides (to fix record_linux compatibility issue)
+dependency_overrides:
+  record_linux: ^1.0.0
+  record_platform_interface: ^1.5.0
+
+# ✅ App Icon Config
+flutter_icons:
+  android: true
+  ios: true
+  image_path: "assets/icon/app_icon.png"
+
+  # ✅ Android Adaptive Icon (اختياري بس مفيد)
+  adaptive_icon_background: "#000000"
+  adaptive_icon_foreground: "assets/icon/app_icon.png"
 
 flutter:
   uses-material-design: true
@@ -59,10 +79,8 @@ flutter:
     - assets/images/
     - assets/images/profile_icon.png
     - assets/images/hello.png
-
-
-
-
+    # ✅ Icon file
+    - assets/icon/app_icon.png
 
     # To add assets to your application, add an assets section, like this:
 

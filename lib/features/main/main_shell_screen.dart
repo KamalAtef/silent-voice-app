@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../app/routes.dart';
 import '../../shared/user_session.dart';
+import '../../services/secure_storage_service.dart'; // ✅ NEW
 
 import '../home/home_screen.dart';
 import '../history/history_screen.dart';
@@ -21,6 +22,8 @@ class _MainShellScreenState extends State<MainShellScreen> {
   static const Color green = Color(0xFF44B65E);
   static const Color blue = Color(0xFF273D8B);
 
+  final _storageService = SecureStorageService(); // ✅ NEW
+
   int _index = 0;
 
   void _goToHistory() {
@@ -31,21 +34,59 @@ class _MainShellScreenState extends State<MainShellScreen> {
     Navigator.pushNamed(context, AppRoutes.profile);
   }
 
-  // ✅ فتح واتساب
-  Future<void> _openHelp() async {
-    const phoneNumber = '201143909706';
-    final message = Uri.encodeComponent('Hello, I need help with Silent Voice.');
-    final uri = Uri.parse('https://wa.me/$phoneNumber?text=$message');
+  // ✅ NEW: load name once from secure storage (so it persists after restart)
+  @override
+  void initState() {
+    super.initState();
+    _loadNameFromStorage();
+  }
 
-    if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
+  Future<void> _loadNameFromStorage() async {
+    final u = await _storageService.getUserData();
+    if (u != null) {
+      UserSession.instance.setFullName(u.fullName);
     } else {
+      UserSession.instance.clear();
+    }
+  }
+
+  // ✅ فتح واتساب
+  // ✅ فتح واتساب (مضمون + fallback)
+  Future<void> _openHelp() async {
+    const phoneNumber = '201143909706'; // بدون +
+    final message = Uri.encodeComponent('Hello, I need help with Silent Voice.');
+
+    // 1) يفتح التطبيق مباشرة لو موجود
+    final appUri = Uri.parse('whatsapp://send?phone=$phoneNumber&text=$message');
+
+    // 2) fallback: wa.me
+    final webUri = Uri.parse('https://wa.me/$phoneNumber?text=$message');
+
+    // 3) fallback: api.whatsapp.com
+    final apiUri =
+    Uri.parse('https://api.whatsapp.com/send?phone=$phoneNumber&text=$message');
+
+    try {
+      if (await canLaunchUrl(appUri)) {
+        await launchUrl(appUri, mode: LaunchMode.externalApplication);
+        return;
+      }
+
+      if (await canLaunchUrl(webUri)) {
+        await launchUrl(webUri, mode: LaunchMode.externalApplication);
+        return;
+      }
+
+      // آخر محاولة
+      await launchUrl(apiUri, mode: LaunchMode.externalApplication);
+    } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Could not open WhatsApp')),
       );
     }
   }
+
 
   @override
   Widget build(BuildContext context) {
@@ -108,13 +149,17 @@ class _MainShellScreenState extends State<MainShellScreen> {
     );
 
     final nameBlock = Column(
-      crossAxisAlignment: isRtl ? CrossAxisAlignment.end : CrossAxisAlignment.start,
       mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment:
+      isRtl ? CrossAxisAlignment.end : CrossAxisAlignment.start,
       children: [
-        SizedBox(
-          width: 200, // نفس عرض الاسم
+        Align( // ✅ ده المهم
+          alignment:
+          isRtl ? Alignment.centerRight : Alignment.centerLeft,
           child: Text(
             '${S.t(context, 'Welcome', 'مرحبًا')} 👋',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
             textAlign: isRtl ? TextAlign.right : TextAlign.left,
             style: TextStyle(
               fontSize: 12,
@@ -123,29 +168,39 @@ class _MainShellScreenState extends State<MainShellScreen> {
             ),
           ),
         ),
+
         const SizedBox(height: 2),
-        ValueListenableBuilder<String>(
-          valueListenable: UserSession.instance.fullName,
-          builder: (context, name, _) {
-            return SizedBox(
-              width: 200,
-              child: Text(
-                name,
+
+        Align( // ✅ نفس المحاذاة للاسم
+          alignment:
+          isRtl ? Alignment.centerRight : Alignment.centerLeft,
+          child: ValueListenableBuilder<String>(
+            valueListenable: UserSession.instance.fullName,
+            builder: (context, name, _) {
+              final fallback = S.t(context, 'User', 'مستخدم');
+
+              final displayName =
+              (name.trim().isEmpty || name == 'User')
+                  ? fallback
+                  : name;
+
+              return Text(
+                displayName,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                textAlign: isRtl ? TextAlign.right : TextAlign.left,
+                textAlign:
+                isRtl ? TextAlign.right : TextAlign.left,
                 style: TextStyle(
                   fontSize: 14,
                   color: appTextColor,
                   fontWeight: FontWeight.w500,
                 ),
-              ),
-            );
-          },
+              );
+            },
+          ),
         ),
       ],
     );
-
 
     return Scaffold(
       backgroundColor: scaffoldBg,
@@ -245,7 +300,6 @@ class _MainShellScreenState extends State<MainShellScreen> {
                 label: S.t(context, 'Setting', 'الإعدادات'),
               ),
             ],
-
           ),
         ),
       ),

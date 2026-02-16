@@ -5,6 +5,7 @@ import '../../services/auth_dtos.dart';
 import '../../shared/strings.dart';
 import '../../services/auth_service.dart';
 import '../../services/secure_storage_service.dart';
+import '../../shared/user_session.dart';
 
 class EmailLoginScreen extends StatefulWidget {
   const EmailLoginScreen({super.key});
@@ -26,6 +27,9 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
   String? _emailError;
   String? _passwordError;
   bool _isLoading = false;
+
+  // ✅ show/hide password
+  bool _obscurePassword = true;
 
   bool get _isEmailValid => _validateEmail(_emailController.text.trim());
   bool get _isPasswordValid => _passwordController.text.trim().isNotEmpty;
@@ -51,13 +55,19 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
     String? passErr;
 
     if (email.isEmpty) {
-      emailErr = showErrors ? S.t(context, "Please enter your email", "من فضلك اكتب البريد الإلكتروني") : null;
+      emailErr = showErrors
+          ? S.t(context, "Please enter your email", "من فضلك اكتب البريد الإلكتروني")
+          : null;
     } else if (!_validateEmail(email)) {
-      emailErr = showErrors ? S.t(context, "Please enter a valid email", "من فضلك اكتب بريد إلكتروني صحيح") : null;
+      emailErr = showErrors
+          ? S.t(context, "Please enter a valid email", "من فضلك اكتب بريد إلكتروني صحيح")
+          : null;
     }
 
     if (pass.isEmpty) {
-      passErr = showErrors ? S.t(context, "Please enter your password", "من فضلك اكتب كلمة المرور") : null;
+      passErr = showErrors
+          ? S.t(context, "Please enter your password", "من فضلك اكتب كلمة المرور")
+          : null;
     }
 
     setState(() {
@@ -71,19 +81,20 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
-        backgroundColor: isError ? const Color(0xFFE24C4B) : EmailLoginScreen.green,
+        backgroundColor:
+        isError ? const Color(0xFFE24C4B) : EmailLoginScreen.green,
         duration: const Duration(seconds: 3),
       ),
     );
   }
 
-  // ✅ FIXED: API Login Integration - handles response correctly
   Future<void> _onLogin() async {
     _validateFields(showErrors: true);
 
     if (!_canLogin) {
       _showSnackBar(
-        S.t(context, 'Please fill in the fields correctly', 'من فضلك اكتب البيانات بشكل صحيح'),
+        S.t(context, 'Please fill in the fields correctly',
+            'من فضلك اكتب البيانات بشكل صحيح'),
         isError: true,
       );
       return;
@@ -100,50 +111,50 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
       if (!mounted) return;
 
       if (response.success) {
-        // ✅ FIXED: Handle different response structures
         try {
           if (response.data != null) {
             final data = response.data;
 
-            // Try to save token (could be in different places)
-            String? token;
-
-            // Check if token is directly in data
             if (data is Map) {
-              token = data['token'] ?? data['Token'] ?? data['accessToken'];
-
-              // Save token if found
-              if (token != null && token.isNotEmpty) {
-                await _storageService.saveToken(token);
+              final token = data['token'] ?? data['Token'] ?? data['accessToken'];
+              if (token != null && token.toString().isNotEmpty) {
+                await _storageService.saveToken(token.toString());
               }
 
-              // Save refresh token if exists (optional)
+              // ✅ direct user fields
+              try {
+                final map = Map<String, dynamic>.from(data as Map);
+                map['id'] = map['id'] ?? map['userID'] ?? map['userId'];
+
+                final directUser = UserData.fromJson(map);
+                await _storageService.saveUserData(directUser);
+                UserSession.instance.setFullName(directUser.fullName);
+              } catch (_) {}
+
               final refreshToken = data['refreshToken'] ?? data['RefreshToken'];
-              if (refreshToken != null && refreshToken.isNotEmpty) {
-                await _storageService.saveRefreshToken(refreshToken);
+              if (refreshToken != null && refreshToken.toString().isNotEmpty) {
+                await _storageService.saveRefreshToken(refreshToken.toString());
               }
 
-              // Save user data if exists
               final userData = data['user'] ?? data['User'];
               if (userData != null && userData is Map) {
                 try {
-                  final user = UserData.fromJson(userData as Map<String, dynamic>);
+                  final user =
+                  UserData.fromJson(userData as Map<String, dynamic>);
                   await _storageService.saveUserData(user);
-                } catch (e) {
-                  print('Error parsing user data: $e');
-                }
+                  UserSession.instance.setFullName(user.fullName);
+                } catch (_) {}
               }
-            }
-            // If data is a string (token directly)
-            else if (data is String && data.isNotEmpty) {
+            } else if (data is String && data.isNotEmpty) {
               await _storageService.saveToken(data);
             }
           }
 
-          // Save email for convenience
-          await _storageService.saveEmail(_emailController.text.trim());
+          // ✅ Save email + put in session
+          final email = _emailController.text.trim();
+          await _storageService.saveEmail(email);
+          UserSession.instance.setEmail(email);
 
-          // Navigate to home
           if (mounted) {
             Navigator.pushNamedAndRemoveUntil(
               context,
@@ -151,9 +162,7 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
                   (route) => false,
             );
           }
-        } catch (e) {
-          print('Error processing login response: $e');
-          // Even if we can't parse everything, if login was successful, go to home
+        } catch (_) {
           if (mounted) {
             Navigator.pushNamedAndRemoveUntil(
               context,
@@ -168,18 +177,16 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
           isError: true,
         );
       }
-    } catch (e) {
-      print('Login error: $e'); // ✅ Added logging
+    } catch (_) {
       if (mounted) {
         _showSnackBar(
-          S.t(context, 'An error occurred. Please try again.', 'حدث خطأ. حاول مرة أخرى.'),
+          S.t(context, 'An error occurred. Please try again.',
+              'حدث خطأ. حاول مرة أخرى.'),
           isError: true,
         );
       }
     } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -188,164 +195,216 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
 
-    final cardColor = theme.brightness == Brightness.dark ? cs.surface : Colors.white;
-    final titleColor = theme.brightness == Brightness.dark ? cs.onSurface : EmailLoginScreen.darkBlue;
+    final cardColor =
+    theme.brightness == Brightness.dark ? cs.surface : Colors.white;
+    final titleColor = theme.brightness == Brightness.dark
+        ? cs.onSurface
+        : EmailLoginScreen.darkBlue;
     final labelColor = EmailLoginScreen.green;
     final hintColor = cs.onSurface.withOpacity(0.45);
     final inputTextColor = cs.onSurface;
+
     final overlayColor = theme.brightness == Brightness.dark
         ? Colors.black.withOpacity(0.35)
         : Colors.black.withOpacity(0.15);
 
     return Scaffold(
       backgroundColor: Colors.transparent,
+      resizeToAvoidBottomInset: true, // ✅ مهم لحركة الكيبورد
       body: Stack(
         children: [
           BackdropFilter(
             filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
             child: Container(color: overlayColor),
           ),
+
           SafeArea(
-            child: Center(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(22),
-                  decoration: BoxDecoration(
-                    color: cardColor,
-                    borderRadius: BorderRadius.circular(28),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return SingleChildScrollView(
+                  keyboardDismissBehavior:
+                  ScrollViewKeyboardDismissBehavior.onDrag,
+                  padding: EdgeInsets.only(
+                    left: 16,
+                    right: 16,
+                    bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+                    top: 0,
                   ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Align(
-                        alignment: AlignmentDirectional.topEnd,
-                        child: GestureDetector(
-                          onTap: () => Navigator.pop(context),
-                          child: Icon(Icons.close, size: 22, color: cs.onSurface),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        S.t(context, 'Login', 'تسجيل الدخول'),
-                        style: TextStyle(
-                          color: titleColor,
-                          fontSize: 32,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-                      Text(
-                        S.t(context, 'Email', 'البريد الإلكتروني'),
-                        style: TextStyle(
-                          color: labelColor,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      _inputField(
-                        controller: _emailController,
-                        hint: S.t(context, 'Enter Your Email', 'اكتب بريدك الإلكتروني'),
-                        obscure: false,
-                        errorText: _emailError,
-                        keyboardType: TextInputType.emailAddress,
-                        onChanged: (_) => _validateFields(showErrors: false),
-                        textColor: inputTextColor,
-                        hintColor: hintColor,
-                        borderColor: cs.outline.withOpacity(0.35),
-                        focusedColor: EmailLoginScreen.darkBlue,
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        S.t(context, 'Password', 'كلمة المرور'),
-                        style: TextStyle(
-                          color: labelColor,
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      _inputField(
-                        controller: _passwordController,
-                        hint: S.t(context, 'Enter Your Password', 'اكتب كلمة المرور'),
-                        obscure: true,
-                        errorText: _passwordError,
-                        keyboardType: TextInputType.text,
-                        onChanged: (_) => _validateFields(showErrors: false),
-                        textColor: inputTextColor,
-                        hintColor: hintColor,
-                        borderColor: cs.outline.withOpacity(0.35),
-                        focusedColor: EmailLoginScreen.darkBlue,
-                      ),
-                      const SizedBox(height: 10),
-                      GestureDetector(
-                        onTap: () {
-                          Navigator.pushNamed(
-                            context,
-                            AppRoutes.forgetPasswordEmail,
-                            arguments: _emailController.text.trim(),
-                          );
-                        },
-                        child: Text(
-                          S.t(context, 'Forget Password?', 'نسيت كلمة المرور؟'),
-                          style: const TextStyle(
-                            fontSize: 13,
-                            color: EmailLoginScreen.green,
-                            fontWeight: FontWeight.w500,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                    child: Center(
+                      child: IntrinsicHeight(
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(22),
+                          decoration: BoxDecoration(
+                            color: cardColor,
+                            borderRadius: BorderRadius.circular(28),
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Align(
+                                alignment: AlignmentDirectional.topEnd,
+                                child: GestureDetector(
+                                  onTap: () => Navigator.pop(context),
+                                  child: Icon(Icons.close,
+                                      size: 22, color: cs.onSurface),
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+
+                              Text(
+                                S.t(context, 'Login', 'تسجيل الدخول'),
+                                style: TextStyle(
+                                  color: titleColor,
+                                  fontSize: 32,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              const SizedBox(height: 24),
+
+                              Text(
+                                S.t(context, 'Email', 'البريد الإلكتروني'),
+                                style: TextStyle(
+                                  color: labelColor,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+
+                              _inputField(
+                                controller: _emailController,
+                                hint: S.t(context, 'Enter Your Email',
+                                    'اكتب بريدك الإلكتروني'),
+                                obscure: false,
+                                errorText: _emailError,
+                                keyboardType: TextInputType.emailAddress,
+                                onChanged: (_) =>
+                                    _validateFields(showErrors: false),
+                                textColor: inputTextColor,
+                                hintColor: hintColor,
+                                borderColor: cs.outline.withOpacity(0.35),
+                                focusedColor: EmailLoginScreen.darkBlue,
+                              ),
+
+                              const SizedBox(height: 16),
+
+                              Text(
+                                S.t(context, 'Password', 'كلمة المرور'),
+                                style: TextStyle(
+                                  color: labelColor,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+
+                              _inputField(
+                                controller: _passwordController,
+                                hint: S.t(context, 'Enter Your Password',
+                                    'اكتب كلمة المرور'),
+                                obscure: _obscurePassword,
+                                errorText: _passwordError,
+                                keyboardType: TextInputType.text,
+                                onChanged: (_) =>
+                                    _validateFields(showErrors: false),
+                                textColor: inputTextColor,
+                                hintColor: hintColor,
+                                borderColor: cs.outline.withOpacity(0.35),
+                                focusedColor: EmailLoginScreen.darkBlue,
+                                suffix: IconButton(
+                                  onPressed: () => setState(() =>
+                                  _obscurePassword = !_obscurePassword),
+                                  icon: Icon(
+                                    _obscurePassword
+                                        ? Icons.visibility_off
+                                        : Icons.visibility,
+                                    size: 20,
+                                    color: cs.onSurface.withOpacity(0.6),
+                                  ),
+                                ),
+                              ),
+
+                              const SizedBox(height: 10),
+
+                              GestureDetector(
+                                onTap: () {
+                                  Navigator.pushNamed(
+                                    context,
+                                    AppRoutes.forgetPasswordEmail,
+                                    arguments: _emailController.text.trim(),
+                                  );
+                                },
+                                child: Text(
+                                  S.t(context, 'Forget Password?',
+                                      'نسيت كلمة المرور؟'),
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    color: EmailLoginScreen.green,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+
+                              const SizedBox(height: 30),
+
+                              SizedBox(
+                                width: double.infinity,
+                                height: 56,
+                                child: ElevatedButton(
+                                  onPressed: _canLogin ? _onLogin : null,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: _canLogin
+                                        ? EmailLoginScreen.green
+                                        : Colors.grey.shade400,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(16),
+                                    ),
+                                    elevation: 0,
+                                  ),
+                                  child: _isLoading
+                                      ? const SizedBox(
+                                    width: 24,
+                                    height: 24,
+                                    child: CircularProgressIndicator(
+                                      color: Colors.white,
+                                      strokeWidth: 2.5,
+                                    ),
+                                  )
+                                      : Text(
+                                    S.t(context, 'Login', 'تسجيل الدخول'),
+                                    style: const TextStyle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                              ),
+
+                              const SizedBox(height: 20),
+
+                              Center(
+                                child: Text(
+                                  S.t(context, '© 2026 - All Rights reserved.',
+                                      '© 2026 - جميع الحقوق محفوظة.'),
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: cs.onSurface.withOpacity(0.45),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ),
-                      const SizedBox(height: 30),
-                      SizedBox(
-                        width: double.infinity,
-                        height: 56,
-                        child: ElevatedButton(
-                          onPressed: _canLogin ? _onLogin : null,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: _canLogin
-                                ? EmailLoginScreen.green
-                                : Colors.grey.shade400,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            elevation: 0,
-                          ),
-                          child: _isLoading
-                              ? const SizedBox(
-                            width: 24,
-                            height: 24,
-                            child: CircularProgressIndicator(
-                              color: Colors.white,
-                              strokeWidth: 2.5,
-                            ),
-                          )
-                              : Text(
-                            S.t(context, 'Login', 'تسجيل الدخول'),
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.w600,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 20),
-                      Center(
-                        child: Text(
-                          S.t(context, '© 2026 - All Rights reserved.', '© 2026 - جميع الحقوق محفوظة.'),
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: cs.onSurface.withOpacity(0.45),
-                          ),
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
-                ),
-              ),
+                );
+              },
             ),
           ),
         ],
@@ -364,6 +423,7 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
     required Color hintColor,
     required Color borderColor,
     required Color focusedColor,
+    Widget? suffix,
   }) {
     return TextField(
       controller: controller,
@@ -375,6 +435,7 @@ class _EmailLoginScreenState extends State<EmailLoginScreen> {
         hintText: hint,
         hintStyle: TextStyle(color: hintColor),
         errorText: errorText,
+        suffixIcon: suffix,
         contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),

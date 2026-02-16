@@ -1,193 +1,445 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_tts/flutter_tts.dart';
+
+import '../../services/voice_service.dart';
+import '../../services/voice_models.dart';
+import '../../shared/strings.dart';
 
 class HistoryScreen extends StatefulWidget {
   const HistoryScreen({super.key});
-
-  static const Color green = Color(0xFF44B65E);
-  static const Color blue = Color(0xFF273D8B);
 
   @override
   State<HistoryScreen> createState() => _HistoryScreenState();
 }
 
 class _HistoryScreenState extends State<HistoryScreen> {
-  final List<String> _items = [
-    "Hello, How are you",
-    "What's your name?",
-    "Are you hungry?",
-    "my",
-    "1 2 3 4 5 6 7 8 9",
-    "A B C D E F G",
-    "Hello, How are you",
-    "What's your name?",
-    "Are you hungry?",
-    "my",
-    "1 2 3 4 5 6 7 8 9",
-  ];
+  static const Color green = Color(0xFF44B65E);
+  static const Color navy = Color(0xFF1F2F6B);
+
+  final _voiceService = VoiceService();
+  final _tts = FlutterTts();
+
+  List<VoiceTranscription> _items = [];
+  bool _isLoading = false;
+  bool _showArabic = true; // Toggle between Arabic and English
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _initTts();
+    _loadHistory();
+  }
+
+  @override
+  void dispose() {
+    _tts.stop();
+    super.dispose();
+  }
+
+  void _initTts() {
+    _tts.setLanguage('en-US');
+    _tts.setSpeechRate(0.5);
+    _tts.setVolume(1.0);
+    _tts.setPitch(1.0);
+  }
+
+  // ==================== LOAD HISTORY ====================
+  Future<void> _loadHistory() async {
+    if (!mounted) return;
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+
+    try {
+      print('🔵 Loading history...');
+
+      final response = await _voiceService.getHistory();
+
+      if (!mounted) return;
+
+      if (response.success) {
+        setState(() {
+          _items = response.data;
+          _isLoading = false;
+        });
+
+        print('✅ Loaded ${_items.length} items');
+      } else {
+        setState(() {
+          _isLoading = false;
+          _errorMessage = response.message ??
+              S.t(context, 'Failed to load history', 'فشل تحميل السجل');
+        });
+      }
+    } catch (e) {
+      print('❌ History Error: $e');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _errorMessage = S.t(
+            context,
+            'An error occurred while loading history',
+            'حدث خطأ أثناء تحميل السجل',
+          );
+        });
+      }
+    }
+  }
+
+  // ==================== DELETE ITEM ====================
+  Future<void> _deleteItem(int index) async {
+    final item = _items[index];
+
+    // Show confirmation dialog
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(S.t(context, 'Delete Item', 'حذف العنصر')),
+        content: Text(
+          S.t(
+            context,
+            'Are you sure you want to delete this item?',
+            'هل أنت متأكد من حذف هذا العنصر؟',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text(S.t(context, 'Cancel', 'إلغاء')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(
+              S.t(context, 'Delete', 'حذف'),
+              style: const TextStyle(color: Color(0xFFE24C4B)),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    // Optimistically remove from UI
+    setState(() {
+      _items.removeAt(index);
+    });
+
+    // Try to delete from backend
+    final success = await _voiceService.deleteTranscription(item.voiceId);
+
+    if (!success) {
+      // Revert if failed
+      setState(() {
+        _items.insert(index, item);
+      });
+
+      _showSnackBar(
+        S.t(context, 'Failed to delete item', 'فشل حذف العنصر'),
+        isError: true,
+      );
+    } else {
+      _showSnackBar(
+        S.t(context, 'Item deleted', 'تم حذف العنصر'),
+      );
+    }
+  }
+
+  // ==================== TEXT TO SPEECH ====================
+  Future<void> _speakText(String text, String lang) async {
+    try {
+      await _tts.setLanguage(lang == 'ar' ? 'ar-SA' : 'en-US');
+      await _tts.speak(text);
+    } catch (e) {
+      print('❌ TTS Error: $e');
+      _showSnackBar(
+        S.t(context, 'Text-to-speech failed', 'فشل النطق'),
+        isError: true,
+      );
+    }
+  }
+
+  // ==================== COPY TEXT ====================
+  void _copyText(String text) {
+    Clipboard.setData(ClipboardData(text: text));
+    _showSnackBar(
+      S.t(context, 'Text copied!', 'تم النسخ!'),
+    );
+  }
+
+  // ==================== UI HELPERS ====================
+  void _showSnackBar(String message, {bool isError = false}) {
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? const Color(0xFFE24C4B) : green,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    // ألوان مرنة حسب الثيم
-    final titleMuted = isDark ? Colors.white70 : const Color(0xFF9AA3AD);
-    final clearDisabled = isDark ? Colors.white30 : const Color(0xFFB9C0C9);
-    final clearEnabled = isDark ? Colors.white : HistoryScreen.blue;
-
-    final cardColor = theme.cardColor;
-    final shadowColor = Colors.black.withOpacity(isDark ? 0.22 : 0.06);
-
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 18),
-        child: Column(
-          children: [
-            const SizedBox(height: 18),
-
-            // Header row (زي ما هو)
-            Row(
-              children: [
-                Icon(Icons.access_time, size: 16, color: titleMuted),
-                const SizedBox(width: 6),
-                Text(
-                  "Translate History",
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: titleMuted,
-                    fontWeight: FontWeight.w400,
-                  ),
-                ),
-                const Spacer(),
-                GestureDetector(
-                  onTap: _items.isEmpty ? null : () => setState(() => _items.clear()),
-                  child: Text(
-                    "Clear All",
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: _items.isEmpty ? clearDisabled : clearEnabled,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 14),
-
-            // ✅ Card بنفس شكل settings
-            Expanded(
-              child: Container(
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  color: cardColor,
-                  borderRadius: BorderRadius.circular(18),
-                  boxShadow: [
-                    BoxShadow(
-                      color: shadowColor,
-                      blurRadius: 18,
-                      offset: const Offset(0, 10),
-                    ),
-                  ],
-                ),
-                child: _items.isEmpty
-                    ? Center(
-                  child: Text(
-                    "No history yet",
-                    style: TextStyle(
-                      color: titleMuted,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w400,
-                    ),
-                  ),
-                )
-                    : ListView.separated(
-                  padding: const EdgeInsets.symmetric(vertical: 6),
-                  itemCount: _items.length,
-                  separatorBuilder: (_, __) => _divider(context),
-                  itemBuilder: (context, index) {
-                    return _historyTile(
-                      context: context,
-                      text: _items[index],
-                      onRemove: () => setState(() => _items.removeAt(index)),
-                    );
-                  },
+    return Scaffold(
+      backgroundColor: theme.scaffoldBackgroundColor,
+      appBar: AppBar(
+        title: Text(S.t(context, 'History', 'السجل')),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        actions: [
+          // Language Toggle Button
+          IconButton(
+            onPressed: () {
+              setState(() {
+                _showArabic = !_showArabic;
+              });
+            },
+            icon: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: green.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: green, width: 1.5),
+              ),
+              child: Text(
+                _showArabic ? 'AR' : 'EN',
+                style: TextStyle(
+                  color: green,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 14,
                 ),
               ),
             ),
+            tooltip: S.t(
+              context,
+              'Toggle Language',
+              'تبديل اللغة',
+            ),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
+      body: _buildBody(isDark),
+    );
+  }
 
-            const SizedBox(height: 12),
-          ],
-        ),
+  Widget _buildBody(bool isDark) {
+    if (_isLoading && _items.isEmpty) {
+      // Initial loading
+      return const Center(
+        child: CircularProgressIndicator(color: green),
+      );
+    }
+
+    if (_errorMessage != null && _items.isEmpty) {
+      // Error state
+      return _buildErrorState();
+    }
+
+    if (_items.isEmpty) {
+      // Empty state
+      return _buildEmptyState();
+    }
+
+    // List with pull-to-refresh
+    return RefreshIndicator(
+      onRefresh: _loadHistory,
+      color: green,
+      child: ListView.separated(
+        padding: const EdgeInsets.all(16),
+        itemCount: _items.length,
+        separatorBuilder: (_, __) => const SizedBox(height: 12),
+        itemBuilder: (context, index) {
+          return _historyTile(_items[index], index, isDark);
+        },
       ),
     );
   }
 
-  static Widget _divider(BuildContext context) => Divider(
-    height: 1,
-    thickness: 1,
-    color: Theme.of(context).dividerColor.withOpacity(0.35),
-  );
+  // ==================== EMPTY STATE ====================
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.history,
+            size: 80,
+            color: Colors.grey.shade400,
+          ),
+          const SizedBox(height: 16),
+          Text(
+            S.t(context, 'No history yet', 'لا يوجد سجل بعد'),
+            style: TextStyle(
+              fontSize: 18,
+              color: Colors.grey.shade600,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            S.t(
+              context,
+              'Start recording to see your transcriptions here',
+              'ابدأ التسجيل لرؤية النصوص هنا',
+            ),
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 14,
+              color: Colors.grey.shade500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-  Widget _historyTile({
-    required BuildContext context,
-    required String text,
-    required VoidCallback onRemove,
-  }) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
+  // ==================== ERROR STATE ====================
+  Widget _buildErrorState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.error_outline,
+            size: 80,
+            color: const Color(0xFFE24C4B),
+          ),
+          const SizedBox(height: 16),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 40),
+            child: Text(
+              _errorMessage ?? S.t(context, 'An error occurred', 'حدث خطأ'),
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 16,
+                color: Colors.grey.shade700,
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+          ElevatedButton(
+            onPressed: _loadHistory,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: green,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(20),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
+            ),
+            child: Text(
+              S.t(context, 'Retry', 'إعادة المحاولة'),
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-    final titleColor = theme.textTheme.bodyLarge?.color ?? (isDark ? Colors.white : HistoryScreen.blue);
-    final subtitleColor = isDark ? Colors.white60 : const Color(0xFF8B95A1);
+  // ==================== HISTORY TILE ====================
+  Widget _historyTile(VoiceTranscription item, int index, bool isDark) {
+    final text = _showArabic ? item.transcriptedTextAr : item.transcriptedTextEn;
+    final lang = _showArabic ? 'ar' : 'en';
 
-    return InkWell(
-      onTap: () {}, // مفيش أكشن دلوقتي (UI بس)
-      borderRadius: BorderRadius.circular(18),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-        child: Row(
-          children: [
-            // ✅ أيقونة زي settings
-            const Icon(Icons.translate_rounded, color: HistoryScreen.green, size: 22),
-            const SizedBox(width: 14),
-
-            // ✅ Text block
-            Expanded(
-              child: Text(
-                text,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF2A2A2A) : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header (Date & Delete)
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                item.getFormattedDate(),
                 style: TextStyle(
-                  fontSize: 16,
-                  color: titleColor,
-                  fontWeight: FontWeight.w600,
+                  fontSize: 12,
+                  color: Colors.grey.shade600,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
-            ),
-
-
-            const SizedBox(width: 10),
-
-            // ✅ زر حذف بنفس روح الـ trailing في settings
-            InkWell(
-              onTap: onRemove,
-              borderRadius: BorderRadius.circular(999),
-              child: Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  color: isDark ? Colors.white10 : const Color(0xFFEAF6EF),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(
-                  Icons.close_rounded,
-                  size: 18,
-                  color: HistoryScreen.green,
-                ),
+              IconButton(
+                onPressed: () => _deleteItem(index),
+                icon: const Icon(Icons.delete_outline, size: 20),
+                color: const Color(0xFFE24C4B),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
               ),
+            ],
+          ),
+
+          const SizedBox(height: 8),
+
+          // Text Content
+          Text(
+            text,
+            style: TextStyle(
+              fontSize: 16,
+              color: isDark ? Colors.white : Colors.black87,
+              height: 1.5,
             ),
-          ],
+          ),
+
+          const SizedBox(height: 12),
+
+          // Action Buttons
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              _miniButton(
+                icon: Icons.copy,
+                onTap: () => _copyText(text),
+              ),
+              const SizedBox(width: 8),
+              _miniButton(
+                icon: Icons.volume_up,
+                onTap: () => _speakText(text, lang),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _miniButton({
+    required IconData icon,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: green.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: green, width: 1),
         ),
+        child: Icon(icon, color: green, size: 16),
       ),
     );
   }

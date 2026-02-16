@@ -25,6 +25,7 @@ class PersonalDetailsScreen extends StatelessWidget {
             _sectionTitle(context, S.t(context, 'Account', 'الحساب')),
             const SizedBox(height: 10),
 
+            // ✅ Full name (READ ONLY)
             ValueListenableBuilder<String>(
               valueListenable: UserSession.instance.fullName,
               builder: (_, name, __) {
@@ -32,21 +33,22 @@ class PersonalDetailsScreen extends StatelessWidget {
                   context,
                   title: S.t(context, 'Full name', 'الاسم بالكامل'),
                   value: name.trim().isEmpty ? '-' : name,
-                  onTap: () => _editTextBottomSheet(
-                    context,
-                    title: S.t(context, 'Full name', 'الاسم بالكامل'),
-                    initialValue: name,
-                    onSave: (v) => UserSession.instance.setFullName(v),
-                  ),
+                  onTap: null, // ✅ no edit
                 );
               },
             ),
 
-            _infoRow(
-              context,
-              title: S.t(context, 'Email', 'البريد الإلكتروني'),
-              value: S.t(context, 'Coming soon', 'قريبًا'),
-              onTap: null,
+            // ✅ Email (READ ONLY)
+            ValueListenableBuilder<String>(
+              valueListenable: UserSession.instance.email,
+              builder: (_, email, __) {
+                return _infoRow(
+                  context,
+                  title: S.t(context, 'Email', 'البريد الإلكتروني'),
+                  value: email.trim().isEmpty ? '-' : email,
+                  onTap: null, // ✅ no edit
+                );
+              },
             ),
           ],
         ),
@@ -107,87 +109,17 @@ class PersonalDetailsScreen extends StatelessWidget {
                 ],
               ),
             ),
-            Icon(
-              Icons.chevron_right_rounded,
-              color: onTap == null ? cs.outline.withOpacity(0.35) : cs.outline,
-              size: 28,
-            ),
+
+            // ✅ Remove arrow when not clickable
+            if (onTap != null)
+              Icon(
+                Icons.chevron_right_rounded,
+                color: cs.outline,
+                size: 28,
+              ),
           ],
         ),
       ),
-    );
-  }
-
-  static Future<void> _editTextBottomSheet(
-      BuildContext context, {
-        required String title,
-        required String initialValue,
-        required ValueChanged<String> onSave,
-      }) async {
-    final controller = TextEditingController(text: initialValue);
-
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (_) {
-        final theme = Theme.of(context);
-        final cs = theme.colorScheme;
-
-        return Padding(
-          padding: EdgeInsets.only(
-            left: 18,
-            right: 18,
-            top: 10,
-            bottom: MediaQuery.of(context).viewInsets.bottom + 16,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  color: cs.onSurface,
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: controller,
-                autofocus: true,
-                decoration: InputDecoration(
-                  hintText: title,
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: Text(S.t(context, 'Cancel', 'إلغاء')),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: FilledButton(
-                      onPressed: () {
-                        onSave(controller.text);
-                        Navigator.pop(context);
-                      },
-                      child: Text(S.t(context, 'Save', 'حفظ')),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        );
-      },
     );
   }
 }
