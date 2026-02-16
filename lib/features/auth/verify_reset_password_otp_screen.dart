@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../app/routes.dart';
 import '../../shared/strings.dart';
@@ -27,11 +28,24 @@ class _VerifyResetPasswordOtpScreenState
   bool _isLoading = false;
   bool _isResending = false;
 
+  // ✅ Timer (10 minutes)
+  static const int _otpSeconds = 10 * 60;
+  int _secondsLeft = _otpSeconds;
+  Timer? _timer;
+
   bool get _canContinue =>
       _controllers.every((c) => RegExp(r'^\d$').hasMatch(c.text.trim())) &&
           !_isLoading;
 
+  bool get _canResend => _secondsLeft == 0 && !_isResending;
+
   String get _code => _controllers.map((c) => c.text.trim()).join();
+
+  @override
+  void initState() {
+    super.initState();
+    _startTimer(reset: true);
+  }
 
   @override
   void didChangeDependencies() {
@@ -51,6 +65,7 @@ class _VerifyResetPasswordOtpScreenState
 
   @override
   void dispose() {
+    _timer?.cancel();
     for (final c in _controllers) {
       c.dispose();
     }
@@ -58,6 +73,29 @@ class _VerifyResetPasswordOtpScreenState
       f.dispose();
     }
     super.dispose();
+  }
+
+  void _startTimer({bool reset = false}) {
+    _timer?.cancel();
+    if (reset) _secondsLeft = _otpSeconds;
+
+    _timer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) return;
+      if (_secondsLeft <= 0) {
+        t.cancel();
+        setState(() => _secondsLeft = 0);
+      } else {
+        setState(() => _secondsLeft -= 1);
+      }
+    });
+  }
+
+  String _formatMMSS(int totalSeconds) {
+    final m = totalSeconds ~/ 60;
+    final s = totalSeconds % 60;
+    final mm = m.toString().padLeft(2, '0');
+    final ss = s.toString().padLeft(2, '0');
+    return '$mm:$ss';
   }
 
   void _onChanged(int index, String value) {
@@ -98,7 +136,7 @@ class _VerifyResetPasswordOtpScreenState
     );
   }
 
-  // ✅ NEW: Verify OTP using the new API endpoint
+  // ✅ Verify OTP using the new API endpoint
   // Endpoint: POST /api/Auth/verify-reset-otp
   Future<void> _onContinue() async {
     if (!_canContinue || _email == null) return;
@@ -108,7 +146,6 @@ class _VerifyResetPasswordOtpScreenState
     try {
       print('🔵 Verifying OTP: $_code for email: $_email');
 
-      // ✅ Call the new verify-reset-otp endpoint
       final response = await _authService.verifyResetOtp(
         email: _email!,
         otp: _code,
@@ -117,24 +154,20 @@ class _VerifyResetPasswordOtpScreenState
       if (!mounted) return;
 
       if (response.success) {
-        // OTP is valid! Navigate to set new password screen
         _showSnackBar(
           S.t(context, 'OTP verified successfully!', 'تم التحقق من الكود بنجاح!'),
         );
 
-        // Small delay to show success message
         await Future.delayed(const Duration(milliseconds: 800));
 
         if (!mounted) return;
 
-        // Navigate to Set New Password screen
         Navigator.pushNamed(
           context,
           AppRoutes.resetPassword,
-          arguments: _email, // Only pass email, OTP is already verified
+          arguments: _email,
         );
       } else {
-        // Invalid OTP
         _showSnackBar(
           response.message ??
               S.t(context, 'Invalid or expired code', 'الكود غير صحيح أو منتهي'),
@@ -151,16 +184,14 @@ class _VerifyResetPasswordOtpScreenState
         );
       }
     } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   // ✅ Resend Password Reset OTP
   // Endpoint: POST /api/Auth/resend-password-reset-otp
   Future<void> _onResendCode() async {
-    if (_email == null || _isResending) return;
+    if (_email == null || _isResending || !_canResend) return;
 
     setState(() => _isResending = true);
 
@@ -175,12 +206,13 @@ class _VerifyResetPasswordOtpScreenState
           S.t(context, 'Code sent successfully!', 'تم إرسال الكود بنجاح!'),
         );
 
-        // Clear the OTP fields
         for (var controller in _controllers) {
           controller.clear();
         }
-        // Focus on first field
         FocusScope.of(context).requestFocus(_focusNodes[0]);
+
+        // ✅ restart 10 min timer after resend
+        _startTimer(reset: true);
       } else {
         _showSnackBar(
           response.message ??
@@ -197,9 +229,7 @@ class _VerifyResetPasswordOtpScreenState
         );
       }
     } finally {
-      if (mounted) {
-        setState(() => _isResending = false);
-      }
+      if (mounted) setState(() => _isResending = false);
     }
   }
 
@@ -254,9 +284,10 @@ class _VerifyResetPasswordOtpScreenState
               const SizedBox(height: 8),
               Text(
                 S.t(
-                    context,
-                    'Enter the 6-digit code sent to your email',
-                    'أدخل الكود المكون من 6 أرقام المرسل لبريدك'),
+                  context,
+                  'Enter the 6-digit code sent to your email',
+                  'أدخل الكود المكون من 6 أرقام المرسل لبريدك',
+                ),
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 12,
@@ -265,10 +296,16 @@ class _VerifyResetPasswordOtpScreenState
                 ),
               ),
               const SizedBox(height: 22),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: List.generate(6, (i) => _codeBox(context, i)),
+
+              // ✅ keep OTP row LTR even in Arabic
+              Directionality(
+                textDirection: TextDirection.ltr,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: List.generate(6, (i) => _codeBox(context, i)),
+                ),
               ),
+
               const SizedBox(height: 22),
               SizedBox(
                 width: double.infinity,
@@ -303,35 +340,50 @@ class _VerifyResetPasswordOtpScreenState
                 ),
               ),
               const SizedBox(height: 14),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    S.t(context, "Didn't you receive any code? ",
-                        "لم يصلك الرمز؟ "),
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: subtitleColor,
-                    ),
-                  ),
-                  InkWell(
-                    onTap: _isResending ? null : _onResendCode,
-                    child: _isResending
-                        ? const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                        : Text(
-                      S.t(context, "Resend Code", "إعادة إرسال"),
+
+              // ✅ keep resend area LTR (timer like 10:00)
+              Directionality(
+                textDirection: TextDirection.ltr,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      S.t(context, "Didn't you receive any code? ",
+                          "لم يصلك الرمز؟ "),
                       style: TextStyle(
                         fontSize: 12,
-                        color: titleColor,
-                        fontWeight: FontWeight.w600,
+                        color: subtitleColor,
                       ),
                     ),
-                  ),
-                ],
+                    InkWell(
+                      onTap: _canResend ? _onResendCode : null,
+                      child: _isResending
+                          ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child:
+                        CircularProgressIndicator(strokeWidth: 2),
+                      )
+                          : (_secondsLeft > 0)
+                          ? Text(
+                        _formatMMSS(_secondsLeft),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: titleColor,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      )
+                          : Text(
+                        S.t(context, "Resend Code", "إعادة إرسال"),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: titleColor,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -358,6 +410,7 @@ class _VerifyResetPasswordOtpScreenState
         autofocus: index == 0,
         keyboardType: TextInputType.number,
         textAlign: TextAlign.center,
+        textDirection: TextDirection.ltr, // ✅ keep digits LTR
         maxLength: 1,
         onChanged: (v) => _onChanged(index, v),
         style: TextStyle(

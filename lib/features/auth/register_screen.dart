@@ -290,11 +290,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 value: _acceptedTerms,
                                 onChanged: (v) =>
                                     setState(() => _acceptedTerms = v ?? false),
-                                activeColor: AppColors.darkBlue,
+
+                                activeColor: AppColors.green, // بدل darkBlue لو عايزها زي الصورة
+                                checkColor: Colors.white,     // يخلي علامة الصح أوضح
+
                                 shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(4),
+                                  borderRadius: BorderRadius.circular(6), // كانت 4
                                 ),
-                              ),
+
+                                side: BorderSide( // ده المهم عشان الإطار يبقى أوضح
+                                  color: Theme.of(context).colorScheme.outline.withOpacity(0.6),
+                                  width: 1.5,
+                                ),
+                              )
+
                             ),
                             Expanded(
                               child: Wrap(

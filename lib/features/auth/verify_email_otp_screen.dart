@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../app/routes.dart';
 import '../../shared/strings.dart';
@@ -25,11 +26,24 @@ class _VerifyEmailOtpScreenState extends State<VerifyEmailOtpScreen> {
   bool _isLoading = false;
   bool _isResending = false;
 
+  // ✅ Timer (10 minutes)
+  static const int _otpSeconds = 10 * 60;
+  int _secondsLeft = _otpSeconds;
+  Timer? _timer;
+
   bool get _canContinue =>
       _controllers.every((c) => RegExp(r'^\d$').hasMatch(c.text.trim())) &&
           !_isLoading;
 
+  bool get _canResend => _secondsLeft == 0 && !_isResending;
+
   String get _code => _controllers.map((c) => c.text.trim()).join();
+
+  @override
+  void initState() {
+    super.initState();
+    _startTimer(reset: true);
+  }
 
   @override
   void didChangeDependencies() {
@@ -47,6 +61,7 @@ class _VerifyEmailOtpScreenState extends State<VerifyEmailOtpScreen> {
 
   @override
   void dispose() {
+    _timer?.cancel();
     for (final c in _controllers) {
       c.dispose();
     }
@@ -54,6 +69,29 @@ class _VerifyEmailOtpScreenState extends State<VerifyEmailOtpScreen> {
       f.dispose();
     }
     super.dispose();
+  }
+
+  void _startTimer({bool reset = false}) {
+    _timer?.cancel();
+    if (reset) _secondsLeft = _otpSeconds;
+
+    _timer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) return;
+      if (_secondsLeft <= 0) {
+        t.cancel();
+        setState(() => _secondsLeft = 0);
+      } else {
+        setState(() => _secondsLeft -= 1);
+      }
+    });
+  }
+
+  String _formatMMSS(int totalSeconds) {
+    final m = totalSeconds ~/ 60;
+    final s = totalSeconds % 60;
+    final mm = m.toString().padLeft(2, '0');
+    final ss = s.toString().padLeft(2, '0');
+    return '$mm:$ss';
   }
 
   void _onChanged(int index, String value) {
@@ -109,13 +147,11 @@ class _VerifyEmailOtpScreenState extends State<VerifyEmailOtpScreen> {
       if (!mounted) return;
 
       if (response.success) {
-        // Show success message
         _showSnackBar(
           S.t(context, 'Email verified successfully!',
               'تم تأكيد البريد الإلكتروني بنجاح!'),
         );
 
-        // Navigate to Login after successful registration
         Future.delayed(const Duration(seconds: 1), () {
           if (mounted) {
             Navigator.pushNamedAndRemoveUntil(
@@ -127,8 +163,7 @@ class _VerifyEmailOtpScreenState extends State<VerifyEmailOtpScreen> {
         });
       } else {
         _showSnackBar(
-          response.message ??
-              S.t(context, 'Invalid code', 'الكود غير صحيح'),
+          response.message ?? S.t(context, 'Invalid code', 'الكود غير صحيح'),
           isError: true,
         );
       }
@@ -141,16 +176,14 @@ class _VerifyEmailOtpScreenState extends State<VerifyEmailOtpScreen> {
         );
       }
     } finally {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   // ✅ Resend Email OTP
   // Endpoint: POST /api/Auth/resend-email-otp
   Future<void> _onResendCode() async {
-    if (_email == null || _isResending) return;
+    if (_email == null || _isResending || !_canResend) return;
 
     setState(() => _isResending = true);
 
@@ -163,6 +196,15 @@ class _VerifyEmailOtpScreenState extends State<VerifyEmailOtpScreen> {
         _showSnackBar(
           S.t(context, 'Code sent successfully!', 'تم إرسال الكود بنجاح!'),
         );
+
+        // ✅ clear fields + focus first
+        for (var c in _controllers) {
+          c.clear();
+        }
+        FocusScope.of(context).requestFocus(_focusNodes[0]);
+
+        // ✅ restart 10 min timer after resend
+        _startTimer(reset: true);
       } else {
         _showSnackBar(
           response.message ??
@@ -179,9 +221,7 @@ class _VerifyEmailOtpScreenState extends State<VerifyEmailOtpScreen> {
         );
       }
     } finally {
-      if (mounted) {
-        setState(() => _isResending = false);
-      }
+      if (mounted) setState(() => _isResending = false);
     }
   }
 
@@ -244,10 +284,16 @@ class _VerifyEmailOtpScreenState extends State<VerifyEmailOtpScreen> {
                 ),
               ),
               const SizedBox(height: 22),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: List.generate(6, (i) => _codeBox(context, i)),
+
+              // ✅ keep OTP row LTR even in Arabic
+              Directionality(
+                textDirection: TextDirection.ltr,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: List.generate(6, (i) => _codeBox(context, i)),
+                ),
               ),
+
               const SizedBox(height: 22),
               SizedBox(
                 width: double.infinity,
@@ -282,35 +328,50 @@ class _VerifyEmailOtpScreenState extends State<VerifyEmailOtpScreen> {
                 ),
               ),
               const SizedBox(height: 14),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    S.t(context, "Didn't you receive any code? ",
-                        "لم يصلك الرمز؟ "),
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: subtitleColor,
-                    ),
-                  ),
-                  InkWell(
-                    onTap: _isResending ? null : _onResendCode,
-                    child: _isResending
-                        ? const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                        : Text(
-                      S.t(context, "Resend Code", "إعادة إرسال"),
+
+              // ✅ keep resend area LTR (timer like 10:00)
+              Directionality(
+                textDirection: TextDirection.ltr,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      S.t(context, "Didn't you receive any code? ",
+                          "لم يصلك الرمز؟ "),
                       style: TextStyle(
                         fontSize: 12,
-                        color: titleColor,
-                        fontWeight: FontWeight.w600,
+                        color: subtitleColor,
                       ),
                     ),
-                  ),
-                ],
+                    InkWell(
+                      onTap: _canResend ? _onResendCode : null,
+                      child: _isResending
+                          ? const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child:
+                        CircularProgressIndicator(strokeWidth: 2),
+                      )
+                          : (_secondsLeft > 0)
+                          ? Text(
+                        _formatMMSS(_secondsLeft),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: titleColor,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      )
+                          : Text(
+                        S.t(context, "Resend Code", "إعادة إرسال"),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: titleColor,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -337,6 +398,7 @@ class _VerifyEmailOtpScreenState extends State<VerifyEmailOtpScreen> {
         autofocus: index == 0,
         keyboardType: TextInputType.number,
         textAlign: TextAlign.center,
+        textDirection: TextDirection.ltr, // ✅ keep digits LTR
         maxLength: 1,
         onChanged: (v) => _onChanged(index, v),
         style: TextStyle(
