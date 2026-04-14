@@ -1,11 +1,27 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Permissions -->
-    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- ================== PERMISSIONS ================== -->
+
+    <!-- Internet (API calls) -->
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Camera -->
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <!-- Audio recording -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <!-- Optional (only for Android < 10) -->
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
+
+    <!-- ================== FEATURES ================== -->
+
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+
+    <!-- ================== APPLICATION ================== -->
 
     <application
         android:label="silentvoice"
@@ -16,7 +32,6 @@
             android:name=".MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
-            android:taskAffinity=""
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
@@ -32,10 +47,19 @@
             </intent-filter>
         </activity>
 
+        <!-- Flutter embedding -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
+
+        <!-- ML Kit (POSE DETECTION, not hand landmark) -->
+        <meta-data
+            android:name="com.google.mlkit.vision.DEPENDENCIES"
+            android:value="pose" />
+
     </application>
+
+    <!-- ================== QUERIES ================== -->
 
     <queries>
         <intent>

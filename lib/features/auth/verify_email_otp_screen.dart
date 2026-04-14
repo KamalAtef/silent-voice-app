@@ -238,143 +238,153 @@ class _VerifyEmailOtpScreenState extends State<VerifyEmailOtpScreen> {
 
     final subtitleColor = cs.onSurface.withOpacity(0.45);
 
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom; // ✅ keyboard height
+
     return Scaffold(
       backgroundColor: bg,
+      resizeToAvoidBottomInset: true, // ✅ prevent overflow with keyboard
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              const SizedBox(height: 80),
-              Container(
-                width: 72,
-                height: 72,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(color: cs.outline.withOpacity(0.25)),
-                ),
-                child: const Center(
-                  child: Icon(
-                    Icons.mail_outline,
-                    color: VerifyEmailOtpScreen.green,
-                    size: 28,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 22),
-              Text(
-                S.t(context, 'Verify Your Email', 'تأكيد البريد الإلكتروني'),
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 30,
-                  height: 1.15,
-                  color: titleColor,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                S.t(context, 'Enter the 6-digit verification code',
-                    'أدخل رمز التحقق المكون من 6 أرقام'),
-                style: TextStyle(
-                  fontSize: 12,
-                  color: subtitleColor,
-                  fontWeight: FontWeight.w400,
-                ),
-              ),
-              const SizedBox(height: 22),
-
-              // ✅ keep OTP row LTR even in Arabic
-              Directionality(
-                textDirection: TextDirection.ltr,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: List.generate(6, (i) => _codeBox(context, i)),
-                ),
-              ),
-
-              const SizedBox(height: 22),
-              SizedBox(
-                width: double.infinity,
-                height: 62,
-                child: ElevatedButton(
-                  onPressed: _canContinue ? _onContinue : null,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: VerifyEmailOtpScreen.green,
-                    disabledBackgroundColor: Colors.grey.shade400,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(32),
-                    ),
-                    elevation: 0,
-                  ),
-                  child: _isLoading
-                      ? const SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(
-                      color: Colors.white,
-                      strokeWidth: 2.5,
-                    ),
-                  )
-                      : Text(
-                    S.t(context, 'Verify Email', 'تأكيد البريد'),
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 14),
-
-              // ✅ keep resend area LTR (timer like 10:00)
-              Directionality(
-                textDirection: TextDirection.ltr,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: EdgeInsets.fromLTRB(24, 0, 24, bottomInset + 16), // ✅ push up above keyboard
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
+                    const SizedBox(height: 80),
+                    Container(
+                      width: 72,
+                      height: 72,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(color: cs.outline.withOpacity(0.25)),
+                      ),
+                      child: const Center(
+                        child: Icon(
+                          Icons.mail_outline,
+                          color: VerifyEmailOtpScreen.green,
+                          size: 28,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 22),
                     Text(
-                      S.t(context, "Didn't you receive any code? ",
-                          "لم يصلك الرمز؟ "),
+                      S.t(context, 'Verify Your Email', 'تأكيد البريد الإلكتروني'),
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 30,
+                        height: 1.15,
+                        color: titleColor,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      S.t(context, 'Enter the 6-digit verification code',
+                          'أدخل رمز التحقق المكون من 6 أرقام'),
                       style: TextStyle(
                         fontSize: 12,
                         color: subtitleColor,
+                        fontWeight: FontWeight.w400,
                       ),
                     ),
-                    InkWell(
-                      onTap: _canResend ? _onResendCode : null,
-                      child: _isResending
-                          ? const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child:
-                        CircularProgressIndicator(strokeWidth: 2),
-                      )
-                          : (_secondsLeft > 0)
-                          ? Text(
-                        _formatMMSS(_secondsLeft),
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: titleColor,
-                          fontWeight: FontWeight.w600,
+                    const SizedBox(height: 22),
+
+                    // ✅ keep OTP row LTR even in Arabic
+                    Directionality(
+                      textDirection: TextDirection.ltr,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: List.generate(6, (i) => _codeBox(context, i)),
+                      ),
+                    ),
+
+                    const SizedBox(height: 22),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 62,
+                      child: ElevatedButton(
+                        onPressed: _canContinue ? _onContinue : null,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: VerifyEmailOtpScreen.green,
+                          disabledBackgroundColor: Colors.grey.shade400,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(32),
+                          ),
+                          elevation: 0,
                         ),
-                      )
-                          : Text(
-                        S.t(context, "Resend Code", "إعادة إرسال"),
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: titleColor,
-                          fontWeight: FontWeight.w600,
+                        child: _isLoading
+                            ? const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2.5,
+                          ),
+                        )
+                            : Text(
+                          S.t(context, 'Verify Email', 'تأكيد البريد'),
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white,
+                          ),
                         ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+
+                    // ✅ keep resend area LTR (timer like 10:00)
+                    Directionality(
+                      textDirection: TextDirection.ltr,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            S.t(context, "Didn't you receive any code? ",
+                                "لم يصلك الرمز؟ "),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: subtitleColor,
+                            ),
+                          ),
+                          InkWell(
+                            onTap: _canResend ? _onResendCode : null,
+                            child: _isResending
+                                ? const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                                : (_secondsLeft > 0)
+                                ? Text(
+                              _formatMMSS(_secondsLeft),
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: titleColor,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            )
+                                : Text(
+                              S.t(context, "Resend Code", "إعادة إرسال"),
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: titleColor,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ],
                 ),
               ),
-            ],
-          ),
+            );
+          },
         ),
       ),
     );
