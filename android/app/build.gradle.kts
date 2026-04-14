@@ -30,6 +30,14 @@ android {
         versionName = flutter.versionName
     }
 
+    dependencies {
+        // existing dependencies...
+        implementation("com.google.mediapipe:tasks-vision:0.10.14")
+        implementation("androidx.camera:camera-core:1.3.4")
+        implementation("androidx.camera:camera-camera2:1.3.4")
+        implementation("androidx.camera:camera-lifecycle:1.3.4")
+    }
+
     buildTypes {
         release {
             // TODO: Add your own signing config for the release build.

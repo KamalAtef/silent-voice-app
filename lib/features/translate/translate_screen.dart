@@ -1,6 +1,5 @@
-// ── lib/screens/translate/translate_screen.dart ───────────────────────────────
-// Updated: Sign Language mode now records video and calls the sign API
-
+// ── lib/screens/translate/translate_screen.dart ───────────────────────────
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,12 +7,11 @@ import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter_tts/flutter_tts.dart';
-import 'package:image_picker/image_picker.dart';   // ADD to pubspec.yaml
 
 import '../../services/voice_service.dart';
 import '../../services/voice_models.dart';
-import '../../services/sign_service.dart';          // NEW
-import '../../services/sign_models.dart';           // NEW
+import '../../services/sign_service.dart';
+import '../../services/sign_models.dart';
 import '../../shared/strings.dart';
 
 class TranslateScreen extends StatefulWidget {
@@ -27,23 +25,43 @@ class _TranslateScreenState extends State<TranslateScreen> {
   static const Color green = Color(0xFF44B65E);
   static const Color navy  = Color(0xFF1F2F6B);
 
+  // ── Platform channel (same channel name as demo) ──────────────────────────
+  static const _channel = MethodChannel('asl_landmark_channel');
+
   // Mode toggle
   bool isSignLanguage = true;
 
-  // ── Voice state (unchanged) ────────────────────────────────────────────────
-  final _audioRecorder    = AudioRecorder();
-  bool  _isRecording      = false;
-  bool  _isProcessing     = false;
+  // ── Voice state — UNCHANGED ───────────────────────────────────────────────
+  final _audioRecorder     = AudioRecorder();
+  bool  _isRecording       = false;
+  bool  _isProcessing      = false;
   String? _audioPath;
   VoiceTranscription? _voiceResult;
   String _selectedLanguage = 'ar';
   final _voiceService      = VoiceService();
 
-  // ── Sign state (NEW) ───────────────────────────────────────────────────────
-  final _signService          = SignService();
-  final _imagePicker          = ImagePicker();
-  bool  _isSignProcessing     = false;
-  SignTranscription? _signResult;
+  // ── Sign state (live camera) ──────────────────────────────────────────────
+  final _signService       = SignService();
+  bool  _cameraRunning     = false;
+  bool  _isDetecting       = false;    // prevents overlapping API calls
+  bool  _isSaving          = false;    // shows spinner while saving to backend
+  bool  _handVisible       = false;
+
+  // Real-time display
+  String _currentSign      = '';       // latest predicted sign label
+  double _currentConf      = 0.0;
+
+  // Sentence accumulation
+  // Words are added when the same sign is held for HOLD_FRAMES consecutive hits
+  final List<String>     _words          = [];
+  String                 _lastSign       = '';
+  int                    _sameSignCount  = 0;
+  static const int       _holdFrames     = 3; // sign must appear 3× in a row (~900ms) to add
+
+  SignTranscription? _savedResult;   // set after successful backend save
+  String _statusMessage = '';
+
+  Timer? _pollingTimer;
 
   // ── Shared ─────────────────────────────────────────────────────────────────
   final _tts = FlutterTts();
@@ -56,6 +74,8 @@ class _TranslateScreenState extends State<TranslateScreen> {
 
   @override
   void dispose() {
+    _pollingTimer?.cancel();
+    _channel.invokeMethod('stopCamera');
     _audioRecorder.dispose();
     _tts.stop();
     super.dispose();
@@ -69,103 +89,156 @@ class _TranslateScreenState extends State<TranslateScreen> {
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  //  SIGN LANGUAGE — Video picker + API call
+  //  SIGN — Start live camera
   // ══════════════════════════════════════════════════════════════════════════
 
-  Future<void> _pickAndProcessSignVideo() async {
-    // Ask user: record now, or pick from gallery
-    final source = await showModalBottomSheet<ImageSource>(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (_) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                S.t(context, 'Choose video source', 'اختر مصدر الفيديو'),
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 16),
-              ListTile(
-                leading: const Icon(Icons.videocam, color: green),
-                title: Text(S.t(context, 'Record new video', 'تسجيل فيديو جديد')),
-                onTap: () => Navigator.pop(context, ImageSource.camera),
-              ),
-              ListTile(
-                leading: const Icon(Icons.video_library, color: green),
-                title: Text(S.t(context, 'Choose from gallery', 'اختيار من المعرض')),
-                onTap: () => Navigator.pop(context, ImageSource.gallery),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-
-    if (source == null) return;
-
-    // Request camera permission if recording
-    if (source == ImageSource.camera) {
-      final status = await Permission.camera.request();
-      if (!status.isGranted) {
-        _showSnackBar(
+  Future<void> _startSignCamera() async {
+    final status = await Permission.camera.request();
+    if (!status.isGranted) {
+      _showSnackBar(
           S.t(context, 'Camera permission denied', 'تم رفض إذن الكاميرا'),
-          isError: true,
-        );
-        return;
-      }
+          isError: true);
+      return;
     }
-
-    // Pick video
-    final picked = await _imagePicker.pickVideo(
-      source       : source,
-      maxDuration  : const Duration(minutes: 2),  // limit to 2 min
-    );
-
-    if (picked == null) return;
-
-    final videoFile = File(picked.path);
-    await _processSignVideo(videoFile);
-  }
-
-  Future<void> _processSignVideo(File videoFile) async {
-    setState(() {
-      _isSignProcessing = true;
-      _signResult       = null;
-    });
 
     try {
-      print('Sending sign video to backend: ${videoFile.path}');
-      final response = await _signService.processSignVideo(videoFile);
-
-      if (!mounted) return;
-
-      if (response.success && response.data != null) {
-        setState(() {
-          _signResult       = response.data;
-          _isSignProcessing = false;
-        });
-        _showSnackBar(S.t(context, 'Sign recognised!', 'تم التعرف على الإشارة!'));
-      } else {
-        setState(() => _isSignProcessing = false);
-        _showSnackBar(
-          response.message ?? S.t(context, 'Recognition failed', 'فشل التعرف'),
-          isError: true,
-        );
-      }
+      await _channel.invokeMethod('startCamera');
     } catch (e) {
-      if (!mounted) return;
-      setState(() => _isSignProcessing = false);
-      _showSnackBar(S.t(context, 'An error occurred', 'حدث خطأ'), isError: true);
+      _showSnackBar(S.t(context, 'Could not start camera', 'تعذر تشغيل الكاميرا'),
+          isError: true);
+      return;
+    }
+
+    setState(() {
+      _cameraRunning  = true;
+      _words.clear();
+      _lastSign       = '';
+      _sameSignCount  = 0;
+      _currentSign    = '';
+      _currentConf    = 0.0;
+      _savedResult    = null;
+      _handVisible    = false;
+      _statusMessage  = S.t(context,
+          'Show your hand and sign — words appear as you hold each sign',
+          'أظهر يدك وقم بالإشارة — تظهر الكلمات عند ثبات كل إشارة');
+    });
+
+    // Poll every 300ms — same as demo
+    _pollingTimer = Timer.periodic(
+      const Duration(milliseconds: 300),
+          (_) => _pollAndPredict(),
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  SIGN — Stop camera and save sentence
+  // ══════════════════════════════════════════════════════════════════════════
+
+  Future<void> _stopSignCamera() async {
+    _pollingTimer?.cancel();
+    await _channel.invokeMethod('stopCamera');
+
+    setState(() {
+      _cameraRunning = false;
+      _handVisible   = false;
+    });
+
+    final sentence = _words.join(' ').trim();
+
+    if (sentence.isEmpty) {
+      _showSnackBar(
+          S.t(context, 'No signs detected', 'لم يتم اكتشاف إشارات'));
+      return;
+    }
+
+    // Save to backend
+    setState(() => _isSaving = true);
+
+    final response = await _signService.saveSignSentence(sentence);
+
+    setState(() => _isSaving = false);
+
+    if (response.success && response.data != null) {
+      setState(() => _savedResult = response.data);
+      _showSnackBar(
+          S.t(context, 'Sentence saved!', 'تم حفظ الجملة!'));
+    } else {
+      _showSnackBar(
+          response.message ??
+              S.t(context, 'Failed to save sentence', 'فشل حفظ الجملة'),
+          isError: true);
     }
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  //  VOICE (unchanged logic)
+  //  SIGN — Polling loop (called every 300ms)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  Future<void> _pollAndPredict() async {
+    if (_isDetecting || !_cameraRunning) return;
+    _isDetecting = true;
+
+    try {
+      // 1. Get latest landmarks from Kotlin
+      final dynamic raw = await _channel.invokeMethod('getLandmarks');
+
+      if (raw == null) {
+        if (mounted) {
+          setState(() {
+            _handVisible   = false;
+            _currentSign   = '';
+            _sameSignCount = 0;
+          });
+        }
+        return;
+      }
+
+      // 2. Convert to List<List<double>>
+      final List<List<double>> landmarks = (raw as List)
+          .map((pt) => (pt as List).map((v) => (v as num).toDouble()).toList())
+          .toList();
+
+      if (mounted) setState(() => _handVisible = true);
+
+      // 3. Ask FastAPI
+      final prediction = await _signService.predictLandmarks(landmarks);
+
+      if (prediction == null) {
+        // Confidence too low — do not add to sentence
+        if (mounted) setState(() => _sameSignCount = 0);
+        return;
+      }
+
+      if (mounted) {
+        setState(() {
+          _currentSign = prediction.sign;
+          _currentConf = prediction.confidence;
+        });
+
+        // 4. Hold-to-confirm: same sign N times in a row → add word
+        if (prediction.sign == _lastSign) {
+          _sameSignCount++;
+          if (_sameSignCount == _holdFrames) {
+            // Avoid repeating the same word consecutively
+            if (_words.isEmpty || _words.last != prediction.sign) {
+              setState(() => _words.add(prediction.sign));
+            }
+            _sameSignCount = 0;
+          }
+        } else {
+          _lastSign      = prediction.sign;
+          _sameSignCount = 1;
+        }
+      }
+    } catch (_) {
+      // Swallow errors silently in the polling loop
+    } finally {
+      _isDetecting = false;
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  VOICE — UNCHANGED (copy-pasted exactly from your original)
   // ══════════════════════════════════════════════════════════════════════════
 
   Future<bool> _requestMicrophonePermission() async {
@@ -178,22 +251,31 @@ class _TranslateScreenState extends State<TranslateScreen> {
       final hasPermission = await _requestMicrophonePermission();
       if (!hasPermission) {
         _showSnackBar(
-          S.t(context, 'Microphone permission denied', 'تم رفض إذن الميكروفون'),
-          isError: true,
-        );
+            S.t(context, 'Microphone permission denied', 'تم رفض إذن الميكروفون'),
+            isError: true);
         return;
       }
       if (await _audioRecorder.hasPermission()) {
         final directory = await getTemporaryDirectory();
-        final path = '${directory.path}/audio_${DateTime.now().millisecondsSinceEpoch}.wav';
+        final path =
+            '${directory.path}/audio_${DateTime.now().millisecondsSinceEpoch}.wav';
         await _audioRecorder.start(
-          const RecordConfig(encoder: AudioEncoder.wav, sampleRate: 44100, bitRate: 128000),
+          const RecordConfig(
+              encoder: AudioEncoder.wav,
+              sampleRate: 44100,
+              bitRate: 128000),
           path: path,
         );
-        setState(() { _isRecording = true; _audioPath = path; _voiceResult = null; });
+        setState(() {
+          _isRecording = true;
+          _audioPath   = path;
+          _voiceResult = null;
+        });
       }
     } catch (e) {
-      _showSnackBar(S.t(context, 'Failed to start recording', 'فشل بدء التسجيل'), isError: true);
+      _showSnackBar(
+          S.t(context, 'Failed to start recording', 'فشل بدء التسجيل'),
+          isError: true);
     }
   }
 
@@ -210,31 +292,42 @@ class _TranslateScreenState extends State<TranslateScreen> {
   Future<void> _transcribeAudio(File audioFile) async {
     setState(() => _isProcessing = true);
     try {
-      final response = await _voiceService.transcribeAudio(audioFile: audioFile, language: _selectedLanguage);
+      final response = await _voiceService.transcribeAudio(
+          audioFile: audioFile, language: _selectedLanguage);
       if (!mounted) return;
       if (response.success && response.data != null) {
-        setState(() { _voiceResult = response.data; _isProcessing = false; });
+        setState(() {
+          _voiceResult = response.data;
+          _isProcessing = false;
+        });
         _showSnackBar(S.t(context, 'Transcription completed!', 'تم النسخ بنجاح!'));
       } else {
         setState(() => _isProcessing = false);
-        _showSnackBar(response.message ?? S.t(context, 'Transcription failed', 'فشل النسخ'), isError: true);
+        _showSnackBar(
+            response.message ??
+                S.t(context, 'Transcription failed', 'فشل النسخ'),
+            isError: true);
       }
     } catch (e) {
       setState(() => _isProcessing = false);
-      _showSnackBar(S.t(context, 'An error occurred', 'حدث خطأ'), isError: true);
+      _showSnackBar(S.t(context, 'An error occurred', 'حدث خطأ'),
+          isError: true);
     } finally {
-      try { if (await audioFile.exists()) await audioFile.delete(); } catch (_) {}
+      try {
+        if (await audioFile.exists()) await audioFile.delete();
+      } catch (_) {}
     }
   }
 
-  // ── Shared helpers ─────────────────────────────────────────────────────────
+  // ── Shared helpers (unchanged) ─────────────────────────────────────────────
 
   Future<void> _speakText(String text, String lang) async {
     try {
       await _tts.setLanguage(lang == 'ar' ? 'ar-SA' : 'en-US');
       await _tts.speak(text);
     } catch (e) {
-      _showSnackBar(S.t(context, 'Text-to-speech failed', 'فشل النطق'), isError: true);
+      _showSnackBar(
+          S.t(context, 'Text-to-speech failed', 'فشل النطق'), isError: true);
     }
   }
 
@@ -246,9 +339,9 @@ class _TranslateScreenState extends State<TranslateScreen> {
   void _showSnackBar(String message, {bool isError = false}) {
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content        : Text(message),
+      content: Text(message),
       backgroundColor: isError ? const Color(0xFFE24C4B) : green,
-      duration       : const Duration(seconds: 2),
+      duration: const Duration(seconds: 2),
     ));
   }
 
@@ -264,9 +357,9 @@ class _TranslateScreenState extends State<TranslateScreen> {
     return Scaffold(
       backgroundColor: theme.scaffoldBackgroundColor,
       appBar: AppBar(
-        title          : Text(S.t(context, 'Translate', 'ترجمة')),
+        title: Text(S.t(context, 'Translate', 'ترجمة')),
         backgroundColor: Colors.transparent,
-        elevation      : 0,
+        elevation: 0,
       ),
       body: SafeArea(
         child: Padding(
@@ -274,13 +367,13 @@ class _TranslateScreenState extends State<TranslateScreen> {
           child: Column(
             children: [
               _buildModeToggle(),
-              const SizedBox(height: 32),
+              const SizedBox(height: 24),
               Expanded(
                 child: isSignLanguage
                     ? _buildSignLanguageMode(isDark)
                     : _buildNormalLanguageMode(isDark),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: 16),
               _buildMainButton(),
             ],
           ),
@@ -289,82 +382,267 @@ class _TranslateScreenState extends State<TranslateScreen> {
     );
   }
 
-  // ── Mode toggle ────────────────────────────────────────────────────────────
+  // ── Mode toggle (unchanged) ────────────────────────────────────────────────
 
   Widget _buildModeToggle() {
     return Container(
-      padding    : const EdgeInsets.all(4),
-      decoration : BoxDecoration(color: const Color(0xFFE6E6E6), borderRadius: BorderRadius.circular(30)),
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+          color: const Color(0xFFE6E6E6),
+          borderRadius: BorderRadius.circular(30)),
       child: Row(
         children: [
-          Expanded(child: _toggleButton(text: S.t(context, 'Sign Language', 'لغة الإشارة'), isSelected: isSignLanguage, onTap: () => setState(() => isSignLanguage = true))),
-          Expanded(child: _toggleButton(text: S.t(context, 'Normal Language', 'اللغة العادية'), isSelected: !isSignLanguage, onTap: () => setState(() => isSignLanguage = false))),
+          Expanded(
+              child: _toggleButton(
+                  text: S.t(context, 'Sign Language', 'لغة الإشارة'),
+                  isSelected: isSignLanguage,
+                  onTap: () => setState(() => isSignLanguage = true))),
+          Expanded(
+              child: _toggleButton(
+                  text: S.t(context, 'Normal Language', 'اللغة العادية'),
+                  isSelected: !isSignLanguage,
+                  onTap: () => setState(() => isSignLanguage = false))),
         ],
       ),
     );
   }
 
-  Widget _toggleButton({required String text, required bool isSelected, required VoidCallback onTap}) {
+  Widget _toggleButton(
+      {required String text,
+        required bool isSelected,
+        required VoidCallback onTap}) {
     return GestureDetector(
-      onTap  : onTap,
-      child  : Container(
-        padding   : const EdgeInsets.symmetric(vertical: 12),
-        decoration: BoxDecoration(color: isSelected ? green : Colors.transparent, borderRadius: BorderRadius.circular(26)),
-        child     : Text(text, textAlign: TextAlign.center, style: TextStyle(color: isSelected ? Colors.white : Colors.black54, fontWeight: FontWeight.w600, fontSize: 14)),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+            color: isSelected ? green : Colors.transparent,
+            borderRadius: BorderRadius.circular(26)),
+        child: Text(text,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+                color: isSelected ? Colors.white : Colors.black54,
+                fontWeight: FontWeight.w600,
+                fontSize: 14)),
       ),
     );
   }
 
-  // ── Sign language mode ─────────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  //  SIGN LANGUAGE UI
+  // ══════════════════════════════════════════════════════════════════════════
 
   Widget _buildSignLanguageMode(bool isDark) {
     return Column(
       children: [
-        _buildSignResultBox(isDark),
-        const SizedBox(height: 16),
-        if (_signResult != null) _buildSignActionButtons(),
+        // ── Live sign indicator ──────────────────────────────────────────────
+        if (_cameraRunning) _buildLiveSignIndicator(),
+        if (_cameraRunning) const SizedBox(height: 12),
+
+        // ── Sentence box ─────────────────────────────────────────────────────
+        Expanded(child: _buildSignSentenceBox(isDark)),
+
+        // ── Action buttons (shown after save) ────────────────────────────────
+        if (_savedResult != null) ...[
+          const SizedBox(height: 12),
+          _buildSignActionButtons(),
+        ],
       ],
     );
   }
 
-  Widget _buildSignResultBox(bool isDark) {
-    String displayText;
+  /// Small card showing the current sign being detected in real time
+  Widget _buildLiveSignIndicator() {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      decoration: BoxDecoration(
+        color: _handVisible ? navy.withOpacity(0.08) : Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+            color: _handVisible ? navy : Colors.grey.shade300, width: 1.5),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          // Hand status dot
+          Row(
+            children: [
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                width: 10,
+                height: 10,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: _handVisible ? green : Colors.grey.shade400,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                _handVisible
+                    ? S.t(context, 'Hand detected', 'تم اكتشاف اليد')
+                    : S.t(context, 'No hand', 'لا توجد يد'),
+                style: TextStyle(
+                    fontSize: 12,
+                    color: _handVisible ? green : Colors.grey.shade500),
+              ),
+            ],
+          ),
+          // Current sign + confidence
+          if (_currentSign.isNotEmpty)
+            Row(
+              children: [
+                Text(
+                  _currentSign,
+                  style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: navy),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  '${(_currentConf * 100).toStringAsFixed(0)}%',
+                  style: TextStyle(
+                      fontSize: 12, color: Colors.grey.shade500),
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
 
-    if (_isSignProcessing) {
-      displayText = S.t(context, 'Processing sign video...\nThis may take a few seconds', 'جاري معالجة فيديو الإشارة...\nقد يستغرق هذا بضع ثوان');
-    } else if (_signResult != null) {
-      displayText =
-      '${S.t(context, 'English:', 'الإنجليزية:')}\n'
-          '${_signResult!.transcriptedTextEn}\n\n'
-          '${S.t(context, 'Arabic:', 'العربية:')}\n'
-          '${_signResult!.transcriptedTextAr}';
+  Widget _buildSignSentenceBox(bool isDark) {
+    // Determine what to show in the main box
+    Widget content;
+
+    if (_isSaving) {
+      content = Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const CircularProgressIndicator(color: green),
+            const SizedBox(height: 16),
+            Text(S.t(context, 'Saving...', 'جاري الحفظ...'),
+                style: const TextStyle(color: Colors.grey)),
+          ],
+        ),
+      );
+    } else if (_savedResult != null) {
+      // Show saved EN + AR result
+      content = SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(S.t(context, 'English:', 'الإنجليزية:'),
+                style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey.shade500,
+                    fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            Text(_savedResult!.transcriptedTextEn,
+                style: TextStyle(
+                    fontSize: 18,
+                    color: isDark ? Colors.white : Colors.black87,
+                    height: 1.5)),
+            const SizedBox(height: 16),
+            Text(S.t(context, 'Arabic:', 'العربية:'),
+                style: TextStyle(
+                    fontSize: 12,
+                    color: Colors.grey.shade500,
+                    fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            Text(_savedResult!.transcriptedTextAr,
+                textDirection: TextDirection.rtl,
+                style: TextStyle(
+                    fontSize: 18,
+                    color: isDark ? Colors.white : Colors.black87,
+                    height: 1.5)),
+          ],
+        ),
+      );
+    } else if (_cameraRunning) {
+      // Show the building sentence word by word
+      content = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _statusMessage,
+            style:
+            TextStyle(fontSize: 12, color: Colors.grey.shade500),
+          ),
+          const SizedBox(height: 16),
+          Expanded(
+            child: _words.isEmpty
+                ? Center(
+              child: Text(
+                S.t(context,
+                    'Hold a sign to add a word…',
+                    'ثبّت إشارة لإضافة كلمة…'),
+                style: TextStyle(
+                    fontSize: 16,
+                    color: Colors.grey.shade400),
+              ),
+            )
+                : Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: _words
+                  .asMap()
+                  .entries
+                  .map((e) => _wordChip(e.value, e.key))
+                  .toList(),
+            ),
+          ),
+        ],
+      );
     } else {
-      displayText = S.t(
-        context,
-        'Press the camera button below to record your sign language video.\n\nYou can perform multiple signs — they will be combined into a sentence.',
-        'اضغط على زر الكاميرا أدناه لتسجيل فيديو لغة الإشارة.\n\nيمكنك أداء إشارات متعددة — سيتم دمجها في جملة.',
+      // Idle state
+      content = Center(
+        child: Text(
+          S.t(
+            context,
+            'Press "Start Camera" to begin.\n\nHold each sign steady for ~1 second to add it to your sentence.\n\nPress "Stop Camera" when finished — your sentence will be saved.',
+            'اضغط "تشغيل الكاميرا" للبدء.\n\nثبّت كل إشارة لمدة ثانية تقريباً لإضافتها.\n\nاضغط "إيقاف الكاميرا" عند الانتهاء — سيتم حفظ الجملة.',
+          ),
+          textAlign: TextAlign.center,
+          style: TextStyle(
+              fontSize: 15,
+              color: isDark ? Colors.white54 : Colors.black54,
+              height: 1.6),
+        ),
       );
     }
 
-    return Expanded(
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFE6E6E6),
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: content,
+    );
+  }
+
+  /// A removable word chip in the building sentence
+  Widget _wordChip(String word, int index) {
+    return GestureDetector(
+      onLongPress: () {
+        // Long-press to remove a word (useful for mistakes)
+        setState(() => _words.removeAt(index));
+      },
       child: Container(
-        width      : double.infinity,
-        padding    : const EdgeInsets.all(20),
-        decoration : BoxDecoration(
-          color        : isDark ? const Color(0xFF2A2A2A) : const Color(0xFFE6E6E6),
-          borderRadius : BorderRadius.circular(24),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: navy.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: navy, width: 1),
         ),
-        child: SingleChildScrollView(
-          child: _isSignProcessing
-              ? const Center(child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              CircularProgressIndicator(color: green),
-              SizedBox(height: 16),
-              Text('Processing...', style: TextStyle(color: Colors.grey)),
-            ],
-          ))
-              : Text(displayText, style: TextStyle(fontSize: 16, color: isDark ? Colors.white70 : Colors.black87, height: 1.5)),
+        child: Text(
+          word,
+          style: const TextStyle(
+              fontSize: 16, fontWeight: FontWeight.w600, color: navy),
         ),
       ),
     );
@@ -372,19 +650,35 @@ class _TranslateScreenState extends State<TranslateScreen> {
 
   Widget _buildSignActionButtons() {
     return Wrap(
-      alignment : WrapAlignment.center,
-      spacing   : 16,
+      alignment: WrapAlignment.center,
+      spacing: 16,
       runSpacing: 12,
-      children  : [
-        _actionButton(icon: Icons.copy, label: S.t(context, 'Copy EN', 'نسخ EN'), onTap: () => _copyText(_signResult!.transcriptedTextEn)),
-        _actionButton(icon: Icons.copy, label: S.t(context, 'Copy AR', 'نسخ AR'), onTap: () => _copyText(_signResult!.transcriptedTextAr)),
-        _actionButton(icon: Icons.volume_up, label: S.t(context, 'Speak EN', 'نطق EN'), onTap: () => _speakText(_signResult!.transcriptedTextEn, 'en')),
-        _actionButton(icon: Icons.volume_up, label: S.t(context, 'Speak AR', 'نطق AR'), onTap: () => _speakText(_signResult!.transcriptedTextAr, 'ar')),
+      children: [
+        _actionButton(
+            icon: Icons.copy,
+            label: S.t(context, 'Copy EN', 'نسخ EN'),
+            onTap: () => _copyText(_savedResult!.transcriptedTextEn)),
+        _actionButton(
+            icon: Icons.copy,
+            label: S.t(context, 'Copy AR', 'نسخ AR'),
+            onTap: () => _copyText(_savedResult!.transcriptedTextAr)),
+        _actionButton(
+            icon: Icons.volume_up,
+            label: S.t(context, 'Speak EN', 'نطق EN'),
+            onTap: () =>
+                _speakText(_savedResult!.transcriptedTextEn, 'en')),
+        _actionButton(
+            icon: Icons.volume_up,
+            label: S.t(context, 'Speak AR', 'نطق AR'),
+            onTap: () =>
+                _speakText(_savedResult!.transcriptedTextAr, 'ar')),
       ],
     );
   }
 
-  // ── Voice mode (unchanged) ─────────────────────────────────────────────────
+  // ══════════════════════════════════════════════════════════════════════════
+  //  VOICE UI — UNCHANGED
+  // ══════════════════════════════════════════════════════════════════════════
 
   Widget _buildNormalLanguageMode(bool isDark) {
     return Column(
@@ -400,21 +694,31 @@ class _TranslateScreenState extends State<TranslateScreen> {
 
   Widget _buildLanguageSelector() {
     return Container(
-      padding   : const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: BoxDecoration(color: const Color(0xFFE6E6E6), borderRadius: BorderRadius.circular(12)),
-      child     : Row(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+          color: const Color(0xFFE6E6E6),
+          borderRadius: BorderRadius.circular(12)),
+      child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Text(S.t(context, 'Detect language:', 'لغة الكشف:'), style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+          Text(S.t(context, 'Detect language:', 'لغة الكشف:'),
+              style: const TextStyle(
+                  fontSize: 14, fontWeight: FontWeight.w500)),
           const SizedBox(width: 12),
           DropdownButton<String>(
-            value   : _selectedLanguage,
+            value: _selectedLanguage,
             underline: const SizedBox(),
-            items   : [
-              DropdownMenuItem(value: 'ar', child: Text(S.t(context, 'Arabic', 'العربية'))),
-              DropdownMenuItem(value: 'en', child: Text(S.t(context, 'English', 'الإنجليزية'))),
+            items: [
+              DropdownMenuItem(
+                  value: 'ar',
+                  child: Text(S.t(context, 'Arabic', 'العربية'))),
+              DropdownMenuItem(
+                  value: 'en',
+                  child: Text(S.t(context, 'English', 'الإنجليزية'))),
             ],
-            onChanged: (v) { if (v != null) setState(() => _selectedLanguage = v); },
+            onChanged: (v) {
+              if (v != null) setState(() => _selectedLanguage = v);
+            },
           ),
         ],
       ),
@@ -423,47 +727,79 @@ class _TranslateScreenState extends State<TranslateScreen> {
 
   Widget _buildTranslationBox(bool isDark) {
     String displayText = '';
-    if (_isProcessing)        displayText = S.t(context, 'Transcribing audio...', 'جاري نسخ الصوت...');
-    else if (_isRecording)    displayText = S.t(context, 'Recording...', 'جاري التسجيل...');
+    if (_isProcessing)
+      displayText = S.t(context, 'Transcribing audio...', 'جاري نسخ الصوت...');
+    else if (_isRecording)
+      displayText = S.t(context, 'Recording...', 'جاري التسجيل...');
     else if (_voiceResult != null) {
-      displayText = '${S.t(context, 'English:', 'الإنجليزية:')}\n${_voiceResult!.transcriptedTextEn}\n\n${S.t(context, 'Arabic:', 'العربية:')}\n${_voiceResult!.transcriptedTextAr}';
+      displayText =
+      '${S.t(context, 'English:', 'الإنجليزية:')}\n${_voiceResult!.transcriptedTextEn}\n\n'
+          '${S.t(context, 'Arabic:', 'العربية:')}\n${_voiceResult!.transcriptedTextAr}';
     } else {
-      displayText = S.t(context, 'Press the microphone to start recording', 'اضغط على الميكروفون لبدء التسجيل');
+      displayText = S.t(context,
+          'Press the microphone to start recording',
+          'اضغط على الميكروفون لبدء التسجيل');
     }
     return Expanded(
       child: Container(
-        width     : double.infinity,
-        padding   : const EdgeInsets.all(20),
-        decoration: BoxDecoration(color: isDark ? const Color(0xFF2A2A2A) : const Color(0xFFE6E6E6), borderRadius: BorderRadius.circular(24)),
-        child     : SingleChildScrollView(child: Text(displayText, style: TextStyle(fontSize: 16, color: isDark ? Colors.white70 : Colors.black87, height: 1.5))),
+        width: double.infinity,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+            color: isDark
+                ? const Color(0xFF2A2A2A)
+                : const Color(0xFFE6E6E6),
+            borderRadius: BorderRadius.circular(24)),
+        child: SingleChildScrollView(
+          child: Text(displayText,
+              style: TextStyle(
+                  fontSize: 16,
+                  color: isDark ? Colors.white70 : Colors.black87,
+                  height: 1.5)),
+        ),
       ),
     );
   }
 
   Widget _buildVoiceActionButtons() {
     return Wrap(
-      alignment : WrapAlignment.center,
-      spacing   : 16,
+      alignment: WrapAlignment.center,
+      spacing: 16,
       runSpacing: 12,
-      children  : [
-        _actionButton(icon: Icons.copy, label: S.t(context, 'Copy EN', 'نسخ EN'), onTap: () => _copyText(_voiceResult!.transcriptedTextEn)),
-        _actionButton(icon: Icons.copy, label: S.t(context, 'Copy AR', 'نسخ AR'), onTap: () => _copyText(_voiceResult!.transcriptedTextAr)),
+      children: [
+        _actionButton(
+            icon: Icons.copy,
+            label: S.t(context, 'Copy EN', 'نسخ EN'),
+            onTap: () => _copyText(_voiceResult!.transcriptedTextEn)),
+        _actionButton(
+            icon: Icons.copy,
+            label: S.t(context, 'Copy AR', 'نسخ AR'),
+            onTap: () => _copyText(_voiceResult!.transcriptedTextAr)),
       ],
     );
   }
 
-  Widget _actionButton({required IconData icon, required String label, required VoidCallback onTap}) {
+  Widget _actionButton(
+      {required IconData icon,
+        required String label,
+        required VoidCallback onTap}) {
     return InkWell(
-      onTap        : onTap,
-      borderRadius : BorderRadius.circular(12),
-      child        : Container(
-        padding   : const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(color: green.withOpacity(0.1), borderRadius: BorderRadius.circular(12), border: Border.all(color: green, width: 1)),
-        child     : Column(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+            color: green.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: green, width: 1)),
+        child: Column(
           children: [
             Icon(icon, color: green, size: 20),
             const SizedBox(height: 4),
-            Text(label, style: TextStyle(fontSize: 10, color: green, fontWeight: FontWeight.w600)),
+            Text(label,
+                style: TextStyle(
+                    fontSize: 10,
+                    color: green,
+                    fontWeight: FontWeight.w600)),
           ],
         ),
       ),
@@ -474,39 +810,70 @@ class _TranslateScreenState extends State<TranslateScreen> {
 
   Widget _buildMainButton() {
     if (isSignLanguage) {
-      // Sign Language: open video picker
       return GestureDetector(
-        onTap: _isSignProcessing ? null : _pickAndProcessSignVideo,
-        child: Container(
-          width     : 80,
-          height    : 80,
+        onTap: _isSaving
+            ? null
+            : (_cameraRunning ? _stopSignCamera : _startSignCamera),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 300),
+          width: 80,
+          height: 80,
           decoration: BoxDecoration(
-            shape    : BoxShape.circle,
-            color    : _isSignProcessing ? Colors.grey : navy,
-            boxShadow: [BoxShadow(color: navy.withOpacity(0.3), blurRadius: 20, spreadRadius: 5)],
+            shape: BoxShape.circle,
+            color: _isSaving
+                ? Colors.grey
+                : (_cameraRunning
+                ? const Color(0xFFE24C4B)
+                : navy),
+            boxShadow: [
+              BoxShadow(
+                  color: (_cameraRunning
+                      ? const Color(0xFFE24C4B)
+                      : navy)
+                      .withOpacity(0.3),
+                  blurRadius: 20,
+                  spreadRadius: 5)
+            ],
           ),
-          child: _isSignProcessing
-              ? const Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3))
-              : const Icon(Icons.videocam, color: Colors.white, size: 40),
+          child: _isSaving
+              ? const Padding(
+              padding: EdgeInsets.all(20),
+              child: CircularProgressIndicator(
+                  color: Colors.white, strokeWidth: 3))
+              : Icon(
+              _cameraRunning ? Icons.stop : Icons.videocam,
+              color: Colors.white,
+              size: 40),
         ),
       );
     } else {
-      // Voice: hold to record
+      // Voice button — UNCHANGED
       return GestureDetector(
-        onTapDown  : (_) => _startRecording(),
-        onTapUp    : (_) => _stopRecording(),
+        onTapDown: (_) => _startRecording(),
+        onTapUp: (_) => _stopRecording(),
         onTapCancel: () => _stopRecording(),
-        child      : Container(
-          width     : 80,
-          height    : 80,
+        child: Container(
+          width: 80,
+          height: 80,
           decoration: BoxDecoration(
-            shape    : BoxShape.circle,
-            color    : _isRecording ? const Color(0xFFE24C4B) : green,
-            boxShadow: [BoxShadow(color: (_isRecording ? const Color(0xFFE24C4B) : green).withOpacity(0.3), blurRadius: 20, spreadRadius: 5)],
+            shape: BoxShape.circle,
+            color: _isRecording ? const Color(0xFFE24C4B) : green,
+            boxShadow: [
+              BoxShadow(
+                  color:
+                  (_isRecording ? const Color(0xFFE24C4B) : green)
+                      .withOpacity(0.3),
+                  blurRadius: 20,
+                  spreadRadius: 5)
+            ],
           ),
           child: _isProcessing
-              ? const Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator(color: Colors.white, strokeWidth: 3))
-              : Icon(_isRecording ? Icons.stop : Icons.mic, color: Colors.white, size: 40),
+              ? const Padding(
+              padding: EdgeInsets.all(20),
+              child: CircularProgressIndicator(
+                  color: Colors.white, strokeWidth: 3))
+              : Icon(_isRecording ? Icons.stop : Icons.mic,
+              color: Colors.white, size: 40),
         ),
       );
     }
