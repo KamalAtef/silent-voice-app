@@ -26,7 +26,8 @@ class _VerifyEmailCodeScreenState extends State<VerifyEmailCodeScreen> {
   bool _isResending = false;
 
   bool get _canContinue =>
-      _controllers.every((c) => RegExp(r'^\d$').hasMatch(c.text.trim())) && !_isLoading;
+      _controllers.every((c) => RegExp(r'^\d$').hasMatch(c.text.trim())) &&
+          !_isLoading;
 
   String get _code => _controllers.map((c) => c.text.trim()).join();
 
@@ -89,7 +90,8 @@ class _VerifyEmailCodeScreenState extends State<VerifyEmailCodeScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
-        backgroundColor: isError ? const Color(0xFFE24C4B) : VerifyEmailCodeScreen.green,
+        backgroundColor:
+        isError ? const Color(0xFFE24C4B) : VerifyEmailCodeScreen.green,
         duration: const Duration(seconds: 3),
       ),
     );
@@ -120,7 +122,8 @@ class _VerifyEmailCodeScreenState extends State<VerifyEmailCodeScreen> {
         } else {
           // Navigate to Login after successful registration
           _showSnackBar(
-            S.t(context, 'Email verified successfully!', 'تم تأكيد البريد الإلكتروني بنجاح!'),
+            S.t(context, 'Email verified successfully!',
+                'تم تأكيد البريد الإلكتروني بنجاح!'),
           );
 
           Future.delayed(const Duration(seconds: 1), () {
@@ -142,7 +145,8 @@ class _VerifyEmailCodeScreenState extends State<VerifyEmailCodeScreen> {
     } catch (e) {
       if (mounted) {
         _showSnackBar(
-          S.t(context, 'An error occurred. Please try again.', 'حدث خطأ. حاول مرة أخرى.'),
+          S.t(context, 'An error occurred. Please try again.',
+              'حدث خطأ. حاول مرة أخرى.'),
           isError: true,
         );
       }
@@ -172,14 +176,16 @@ class _VerifyEmailCodeScreenState extends State<VerifyEmailCodeScreen> {
         );
       } else {
         _showSnackBar(
-          response.message ?? S.t(context, 'Failed to resend code', 'فشل إعادة إرسال الكود'),
+          response.message ??
+              S.t(context, 'Failed to resend code', 'فشل إعادة إرسال الكود'),
           isError: true,
         );
       }
     } catch (e) {
       if (mounted) {
         _showSnackBar(
-          S.t(context, 'An error occurred. Please try again.', 'حدث خطأ. حاول مرة أخرى.'),
+          S.t(context, 'An error occurred. Please try again.',
+              'حدث خطأ. حاول مرة أخرى.'),
           isError: true,
         );
       }
@@ -202,120 +208,133 @@ class _VerifyEmailCodeScreenState extends State<VerifyEmailCodeScreen> {
 
     final subtitleColor = cs.onSurface.withOpacity(0.45);
 
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom; // ✅ keyboard height
+
     return Scaffold(
       backgroundColor: bg,
+      resizeToAvoidBottomInset: true, // ✅ prevent overflow with keyboard
       body: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              const SizedBox(height: 80),
-              Container(
-                width: 72,
-                height: 72,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(color: cs.outline.withOpacity(0.25)),
-                ),
-                child: const Center(
-                  child: Icon(
-                    Icons.mail_outline,
-                    color: VerifyEmailCodeScreen.green,
-                    size: 28,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 22),
-              Text(
-                S.t(context, 'Verify Your Email', 'تأكيد البريد الإلكتروني'),
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 30,
-                  height: 1.15,
-                  color: titleColor,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                S.t(context, 'Enter the 6-digit verification code', 'أدخل رمز التحقق المكون من 6 أرقام'),
-                style: TextStyle(
-                  fontSize: 12,
-                  color: subtitleColor,
-                  fontWeight: FontWeight.w400,
-                ),
-              ),
-              const SizedBox(height: 22),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: List.generate(6, (i) => _codeBox(context, i)),
-              ),
-              const SizedBox(height: 22),
-              SizedBox(
-                width: double.infinity,
-                height: 62,
-                child: ElevatedButton(
-                  onPressed: _canContinue ? _onContinue : null,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: VerifyEmailCodeScreen.green,
-                    disabledBackgroundColor: Colors.grey.shade400,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(32),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: EdgeInsets.fromLTRB(24, 0, 24, bottomInset + 16), // ✅ push up above keyboard
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    const SizedBox(height: 80),
+                    Container(
+                      width: 72,
+                      height: 72,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(color: cs.outline.withOpacity(0.25)),
+                      ),
+                      child: const Center(
+                        child: Icon(
+                          Icons.mail_outline,
+                          color: VerifyEmailCodeScreen.green,
+                          size: 28,
+                        ),
+                      ),
                     ),
-                    elevation: 0,
-                  ),
-                  child: _isLoading
-                      ? const SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(
-                      color: Colors.white,
-                      strokeWidth: 2.5,
-                    ),
-                  )
-                      : Text(
-                    S.t(context, 'Continue', 'متابعة'),
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.w600,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 14),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    S.t(context, "Didn't you receive any code? ", "لم يصلك الرمز؟ "),
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: subtitleColor,
-                    ),
-                  ),
-                  InkWell(
-                    onTap: _isResending ? null : _onResendCode,
-                    child: _isResending
-                        ? const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                        : Text(
-                      S.t(context, "Resend Code", "إعادة إرسال"),
+                    const SizedBox(height: 22),
+                    Text(
+                      S.t(context, 'Verify Your Email', 'تأكيد البريد الإلكتروني'),
+                      textAlign: TextAlign.center,
                       style: TextStyle(
-                        fontSize: 12,
+                        fontSize: 30,
+                        height: 1.15,
                         color: titleColor,
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 8),
+                    Text(
+                      S.t(context, 'Enter the 6-digit verification code',
+                          'أدخل رمز التحقق المكون من 6 أرقام'),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: subtitleColor,
+                        fontWeight: FontWeight.w400,
+                      ),
+                    ),
+                    const SizedBox(height: 22),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: List.generate(6, (i) => _codeBox(context, i)),
+                    ),
+                    const SizedBox(height: 22),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 62,
+                      child: ElevatedButton(
+                        onPressed: _canContinue ? _onContinue : null,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: VerifyEmailCodeScreen.green,
+                          disabledBackgroundColor: Colors.grey.shade400,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(32),
+                          ),
+                          elevation: 0,
+                        ),
+                        child: _isLoading
+                            ? const SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2.5,
+                          ),
+                        )
+                            : Text(
+                          S.t(context, 'Continue', 'متابعة'),
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          S.t(context, "Didn't you receive any code? ",
+                              "لم يصلك الرمز؟ "),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: subtitleColor,
+                          ),
+                        ),
+                        InkWell(
+                          onTap: _isResending ? null : _onResendCode,
+                          child: _isResending
+                              ? const SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                              : Text(
+                            S.t(context, "Resend Code", "إعادة إرسال"),
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: titleColor,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
-            ],
-          ),
+            );
+          },
         ),
       ),
     );
@@ -325,7 +344,8 @@ class _VerifyEmailCodeScreenState extends State<VerifyEmailCodeScreen> {
     final theme = Theme.of(context);
     final cs = theme.colorScheme;
 
-    final fill = theme.brightness == Brightness.dark ? cs.surface : const Color(0xFFF6F8FB);
+    final fill =
+    theme.brightness == Brightness.dark ? cs.surface : const Color(0xFFF6F8FB);
     final border = cs.outline.withOpacity(0.30);
 
     return SizedBox(
