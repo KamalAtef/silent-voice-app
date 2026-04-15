@@ -309,18 +309,18 @@ class _HistoryScreenState extends State<HistoryScreen> {
               Container(
                 padding   : const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                 decoration: BoxDecoration(
-                  color       : item.isSign ? navy.withOpacity(0.1) : green.withOpacity(0.1),
+                  color       : item.isSign ? Colors.orange.withOpacity(0.1) : green.withOpacity(0.1),
                   borderRadius: BorderRadius.circular(20),
-                  border      : Border.all(color: item.isSign ? navy : green, width: 1),
+                  border      : Border.all(color: item.isSign ? Colors.orange : green, width: 1),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(item.isSign ? Icons.sign_language : Icons.mic, size: 12, color: item.isSign ? navy : green),
+                    Icon(item.isSign ? Icons.sign_language : Icons.mic, size: 12, color: item.isSign ? Colors.orange : green),
                     const SizedBox(width: 4),
                     Text(
                       item.isSign ? S.t(context, 'Sign', 'إشارة') : S.t(context, 'Voice', 'صوت'),
-                      style: TextStyle(fontSize: 11, color: item.isSign ? navy : green, fontWeight: FontWeight.w600),
+                      style: TextStyle(fontSize: 11, color: item.isSign ? Colors.orange : green, fontWeight: FontWeight.w600),
                     ),
                   ],
                 ),
