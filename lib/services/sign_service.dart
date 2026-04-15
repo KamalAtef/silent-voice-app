@@ -11,7 +11,7 @@ class SignService {
 
   // ── Your deployed FastAPI on Render ───────────────────────────────────────
   // After deploying to Render, paste your URL here:
-  static const String _fastApiUrl = 'https://silent-voice-ai.onrender.com';
+  static const String _fastApiUrl = 'https://fastapi-example-i0u4.onrender.com';
 
   final _storage = SecureStorageService();
 
@@ -65,12 +65,12 @@ class SignService {
 
       final response = await http
           .post(
-        Uri.parse('$_baseUrl/api/sign/save'),
+        Uri.parse('$_baseUrl/api/Sign/save'),
         headers: {
           ..._authHeaders(token),
           'Content-Type': 'application/json',
         },
-        body: jsonEncode({'sentenceEn': sentenceEn}),
+        body: jsonEncode({'SentenceEn': sentenceEn}),
       )
           .timeout(const Duration(seconds: 30));
 
