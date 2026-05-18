@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../shared/strings.dart';
+import '../../services/auth_service.dart';
+import '../../services/secure_storage_service.dart';
+import '../../services/auth_dtos.dart';
 import 'email_login_screen.dart';
 import 'register_screen.dart';
 
@@ -20,7 +23,7 @@ class LoginScreen extends StatelessWidget {
             fit: BoxFit.cover,
           ),
 
-          // Gradient overlay (Splash style - 30%)
+          // Gradient overlay
           Container(
             decoration: BoxDecoration(
               gradient: LinearGradient(
@@ -41,12 +44,10 @@ class LoginScreen extends StatelessWidget {
                 children: [
                   const Spacer(),
 
-                  // Google login
+                  // ✅ Google login button with real onTap
                   _googleLoginButton(
                     context: context,
-                    onTap: () {
-                      // TODO: Google auth later
-                    },
+                    onTap: () => _handleGoogleLogin(context),
                   ),
 
                   const SizedBox(height: 14),
@@ -55,10 +56,7 @@ class LoginScreen extends StatelessWidget {
                   _emailLoginButton(
                     context: context,
                     onTap: () {
-                      _openOverlay(
-                        context,
-                        const EmailLoginScreen(),
-                      );
+                      _openOverlay(context, const EmailLoginScreen());
                     },
                   ),
 
@@ -69,11 +67,7 @@ class LoginScreen extends StatelessWidget {
                     crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       Text(
-                        S.t(
-                          context,
-                          "You don't have an account? ",
-                          "ليس لديك حساب؟ ",
-                        ),
+                        S.t(context, "You don't have an account? ", "ليس لديك حساب؟ "),
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 14,
@@ -82,10 +76,7 @@ class LoginScreen extends StatelessWidget {
                       ),
                       GestureDetector(
                         onTap: () {
-                          _openOverlay(
-                            context,
-                            const RegisterScreen(),
-                          );
+                          _openOverlay(context, const RegisterScreen());
                         },
                         child: Text(
                           S.t(context, 'Register now', 'سجّل الآن'),
@@ -111,7 +102,45 @@ class LoginScreen extends StatelessWidget {
     );
   }
 
-  // ===== Overlay Navigation (Blur + Fade) =====
+  // ===== Google Login Handler =====
+  static Future<void> _handleGoogleLogin(BuildContext context) async {
+    try {
+      final result = await AuthService().signInWithGoogle();
+
+      if (!context.mounted) return;
+
+      if (result.success && result.data != null) {
+        final data = result.data as Map<String, dynamic>;
+        final token = data['token'] as String?;
+
+        if (token != null) {
+          final storage = SecureStorageService();
+
+          await storage.saveToken(token);
+          await storage.saveUserData(UserData(
+            id: data['userID']?.toString(),
+            email: data['email'],
+            firstName: data['fName'],
+            lastName: data['lName'],
+          ));
+
+          if (!context.mounted) return;
+          Navigator.pushReplacementNamed(context, '/home');
+        }
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(result.message ?? 'Google sign-in failed')),
+        );
+      }
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Something went wrong: $e')),
+      );
+    }
+  }
+
+  // ===== Overlay Navigation =====
   static void _openOverlay(BuildContext context, Widget screen) {
     Navigator.of(context).push(
       PageRouteBuilder(
@@ -122,10 +151,7 @@ class LoginScreen extends StatelessWidget {
         pageBuilder: (_, __, ___) => screen,
         transitionsBuilder: (_, anim, __, child) {
           return FadeTransition(
-            opacity: CurvedAnimation(
-              parent: anim,
-              curve: Curves.easeOut,
-            ),
+            opacity: CurvedAnimation(parent: anim, curve: Curves.easeOut),
             child: child,
           );
         },
@@ -153,10 +179,7 @@ class LoginScreen extends StatelessWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Image.asset(
-                'assets/images/google_icon.png',
-                height: 22,
-              ),
+              Image.asset('assets/images/google_icon.png', height: 22),
               const SizedBox(width: 12),
               Text(
                 S.t(context, 'Login with Google', 'تسجيل الدخول عبر Google'),
@@ -193,10 +216,7 @@ class LoginScreen extends StatelessWidget {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Image.asset(
-                'assets/images/email_icon.png',
-                height: 22,
-              ),
+              Image.asset('assets/images/email_icon.png', height: 22),
               const SizedBox(width: 12),
               Text(
                 S.t(context, 'Login by e-mail', 'تسجيل الدخول بالبريد'),

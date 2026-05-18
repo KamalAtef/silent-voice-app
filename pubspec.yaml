@@ -8,6 +8,8 @@ environment:
   sdk: ^3.9.2
 
 dependencies:
+  google_sign_in: ^6.2.1
+  connectivity_plus: ^6.0.3
   flutter:
     sdk: flutter
   flutter_localizations:

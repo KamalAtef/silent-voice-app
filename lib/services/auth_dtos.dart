@@ -118,6 +118,14 @@ class ResendEmailDto {
   };
 }
 
+class GoogleLoginDto {
+  final String idToken;
+
+  GoogleLoginDto({required this.idToken});
+
+  Map<String, dynamic> toJson() => {'idToken': idToken};
+}
+
 // ==================== API RESPONSE ====================
 class ApiResponse {
   final bool success;

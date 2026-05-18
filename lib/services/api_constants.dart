@@ -16,6 +16,8 @@ class ApiConstants {
 
   static const String resendEmailOtp = '/api/Auth/resend-email-otp';
 
+  static const String googleLogin = '/api/Auth/google-login';
+
   // Headers
   static Map<String, String> get headers => {
     'Content-Type': 'application/json',
@@ -31,4 +33,6 @@ class ApiConstants {
   static String get setNewPasswordUrl => baseUrl + setNewPassword; // NEW
   static String get resendEmailOtpUrl => baseUrl + resendEmailOtp;
   static String get resendPasswordResetOtpUrl => baseUrl + resendPasswordResetOtp;
+  static String get googleLoginUrl => baseUrl + googleLogin;
+
 }

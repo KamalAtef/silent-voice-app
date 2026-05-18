@@ -2,6 +2,10 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'api_constants.dart';
 import 'auth_dtos.dart';
+import 'package:google_sign_in/google_sign_in.dart';
+import 'dart:async';
+import 'dart:io';
+import 'package:connectivity_plus/connectivity_plus.dart';
 
 /// Auth Service - Handles all authentication API calls
 class AuthService {
@@ -218,6 +222,53 @@ class AuthService {
       return _handleResponse(response);
     } catch (e) {
       print('❌ Resend Email OTP Error: $e');
+      return _handleError(e);
+    }
+  }
+
+  // ==================== GOOGLE LOGIN ====================
+  final _googleSignIn = GoogleSignIn(
+    serverClientId: '239074447114-p09ccn52j6qmj6jj0h2912lkrfp6vb2n.apps.googleusercontent.com', // 👈 same Web Client ID
+    scopes: ['email', 'profile'],
+  );
+
+  Future<ApiResponse> signInWithGoogle() async {
+    try {
+      final connectivity = await Connectivity().checkConnectivity();
+      if (connectivity.contains(ConnectivityResult.none)) {
+        return ApiResponse(
+          success: false,
+          message: 'No internet connection. Please check your network.',
+        );
+      }
+
+      await _googleSignIn.signOut();
+
+      final googleUser = await _googleSignIn.signIn();
+      if (googleUser == null) {
+        return ApiResponse(success: false, message: 'Google sign-in cancelled');
+      }
+
+      final googleAuth = await googleUser.authentication;
+      final idToken = googleAuth.idToken;
+      if (idToken == null) {
+        return ApiResponse(success: false, message: 'Failed to get Google token');
+      }
+
+      print('🔵 Got idToken, sending to backend...');
+
+      final response = await http.post(
+        Uri.parse(ApiConstants.googleLoginUrl),
+        headers: ApiConstants.headers,
+        body: jsonEncode(GoogleLoginDto(idToken: idToken).toJson()),
+      ).timeout(const Duration(seconds: 10)); // ✅ handles unstable network
+
+      print('📥 Google Login Response: ${response.statusCode}');
+      print('📥 Google Login Body: ${response.body}');
+
+      return _handleResponse(response);
+    } catch (e) {
+      print('❌ Google Sign-In Error: $e');
       return _handleError(e);
     }
   }
